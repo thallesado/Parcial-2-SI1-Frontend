@@ -45,6 +45,7 @@ import {
   GrupoResumen,
   Materia,
   NotasMateria,
+  PaginatedResponse,
   Postulante,
   PromedioPostulante,
 } from "@/lib/api";
@@ -107,8 +108,6 @@ export default function AdminPage() {
   const [aulas, setAulas] = useState<Aula[]>([]);
   const [gruposResumen, setGruposResumen] = useState<GrupoResumen | null>(null);
   const [docentes, setDocentes] = useState<Docente[]>([]);
-  const [postulantes, setPostulantes] = useState<Postulante[]>([]);
-  const [promedios, setPromedios] = useState<PromedioPostulante[]>([]);
   const [bitacoras, setBitacoras] = useState<Bitacora[]>([]);
   const [cupos, setCupos] = useState<CupoCarrera[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -180,7 +179,7 @@ export default function AdminPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [dash, ges, car, mat, au, gru, doc, pos, pro, bit, cup] = await Promise.all([
+      const [dash, ges, car, mat, au, gru, doc, bit, cup] = await Promise.all([
         apiGet<Dashboard>("/admin/dashboard"),
         apiGet<Gestion[]>("/admin/gestiones"),
         apiGet<Carrera[]>("/admin/carreras"),
@@ -188,8 +187,6 @@ export default function AdminPage() {
         apiGet<Aula[]>("/admin/aulas"),
         apiGet<GrupoResumen>("/admin/grupos/resumen"),
         apiGet<Docente[]>("/admin/docentes"),
-        apiGet<Postulante[]>("/admin/postulantes"),
-        apiGet<PromedioPostulante[]>("/admin/examenes/postulantes"),
         apiGet<Bitacora[]>("/admin/bitacora"),
         apiGet<CupoCarrera[]>("/admin/cupos"),
       ]);
@@ -200,8 +197,6 @@ export default function AdminPage() {
       setAulas(au);
       setGruposResumen(gru);
       setDocentes(doc);
-      setPostulantes(pos);
-      setPromedios(pro);
       setBitacoras(bit);
       setCupos(cup);
     } catch {
@@ -328,7 +323,6 @@ export default function AdminPage() {
           {active === "cupos" && <CrudCupo rows={cupos} carreras={carreras} gestiones={gestiones} onSubmit={(payload) => submit("/admin/cupos", payload)} />}
           {active === "postulantes" && (
             <CrudPostulante
-              rows={postulantes}
               carreras={carreras}
               gestiones={gestiones}
               grupos={gruposResumen?.grupos ?? []}
@@ -337,7 +331,7 @@ export default function AdminPage() {
               onDelete={(id) => remove(`/admin/postulantes/${id}`)}
             />
           )}
-          {active === "examenes" && <ExamenesModule postulantes={promedios} />}
+          {active === "examenes" && <ExamenesModule gestiones={gestiones} />}
           {active === "bitacora" && <BitacoraModule rows={bitacoras} />}
           {active === "reportes" && <ReportesModule />}
         </div>
@@ -754,9 +748,10 @@ function PreviewPanel({ title, description, items }: { title: string; descriptio
   );
 }
 
-// UI TABLE - tabla reusable con ordenamiento por columna y columna opcional de acciones.
-function Table({ columns, rows, actions, compact = false }: { columns: string[]; rows: Array<Record<string, unknown>>; actions?: (row: Record<string, unknown>) => React.ReactNode; compact?: boolean }) {
+// UI TABLE - tabla reusable con ordenamiento, acciones y paginacion local de 20 filas.
+function Table({ columns, rows, actions, compact = false, paginated = true, pageSize = 20 }: { columns: string[]; rows: Array<Record<string, unknown>>; actions?: (row: Record<string, unknown>) => React.ReactNode; compact?: boolean; paginated?: boolean; pageSize?: number }) {
   const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
+  const [page, setPage] = useState(1);
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
 
@@ -772,6 +767,11 @@ function Table({ columns, rows, actions, compact = false }: { columns: string[];
       return sort.direction === "asc" ? result : -result;
     });
   }, [rows, sort]);
+  const lastPage = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const currentPage = Math.min(page, lastPage);
+  const visibleRows = paginated ? sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize) : sortedRows;
+  const from = sortedRows.length === 0 ? null : ((currentPage - 1) * pageSize) + 1;
+  const to = sortedRows.length === 0 ? null : Math.min(currentPage * pageSize, sortedRows.length);
 
   function toggleSort(column: string) {
     setSort((current) => current?.column === column
@@ -780,35 +780,47 @@ function Table({ columns, rows, actions, compact = false }: { columns: string[];
   }
 
   return (
-    <div className="mt-6 overflow-auto rounded-lg bg-white shadow-sm">
-      <table className={`${compact ? "min-w-[980px]" : "min-w-[760px]"} w-full text-left text-sm`}>
-        <thead className="bg-blue-700 text-white">
-          <tr>
-            {columns.map((column) => (
-              <th key={column} className={`${column.endsWith("_id") ? "w-16 px-2" : "px-3"} py-3`}>
-                <button className="font-bold" onClick={() => toggleSort(column)}>
-                  {prettyColumn(column)}{sort?.column === column ? (sort.direction === "asc" ? " ASC" : " DESC") : ""}
-                </button>
-              </th>
-            ))}
-            {actions && <th className="w-24 px-3 py-3">Acciones</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {sortedRows.map((row, index) => (
-            <tr key={index} className="border-b border-slate-100">
+    <div className="mt-6 rounded-lg bg-white shadow-sm">
+      <div className="overflow-auto rounded-lg">
+        <table className={`${compact ? "min-w-[980px]" : "min-w-[760px]"} w-full text-left text-sm`}>
+          <thead className="bg-blue-700 text-white">
+            <tr>
               {columns.map((column) => (
-                <td key={column} className={`${column.endsWith("_id") ? "px-2" : "px-3"} py-3 text-slate-700`}>
-                  {column === "grupo_asignado" && !row[column]
-                    ? <span className="font-bold text-red-700">Sin grupo asignado</span>
-                    : String(row[column] ?? "")}
-                </td>
+                <th key={column} className={`${column.endsWith("_id") ? "w-16 px-2" : "px-3"} py-3`}>
+                  <button className="font-bold" onClick={() => toggleSort(column)}>
+                    {prettyColumn(column)}{sort?.column === column ? (sort.direction === "asc" ? " ASC" : " DESC") : ""}
+                  </button>
+                </th>
               ))}
-              {actions && <td className="px-3 py-3">{actions(row)}</td>}
+              {actions && <th className="w-24 px-3 py-3">Acciones</th>}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, index) => (
+              <tr key={`${currentPage}-${index}`} className="border-b border-slate-100">
+                {columns.map((column) => (
+                  <td key={column} className={`${column.endsWith("_id") ? "px-2" : "px-3"} py-3 text-slate-700`}>
+                    {column === "grupo_asignado" && !row[column]
+                      ? <span className="font-bold text-red-700">Sin grupo asignado</span>
+                      : String(row[column] ?? "")}
+                  </td>
+                ))}
+                {actions && <td className="px-3 py-3">{actions(row)}</td>}
+              </tr>
+            ))}
+            {visibleRows.length === 0 && (
+              <tr>
+                <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-8 text-center font-semibold text-slate-500">No hay registros para mostrar.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {paginated && sortedRows.length > pageSize && (
+        <div className="px-4 pb-4">
+          <PaginationControls page={currentPage} lastPage={lastPage} total={sortedRows.length} from={from} to={to} onPageChange={setPage} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1308,51 +1320,109 @@ function CrudCupo({ rows, carreras, gestiones, onSubmit }: { rows: CupoCarrera[]
 }
 
 // MODULO POSTULANTES - registro, busqueda, filtros, edicion, eliminacion y grupo asignado.
-function CrudPostulante({ rows, carreras, gestiones, grupos, onSubmit, onUpdate, onDelete }: { rows: Postulante[]; carreras: Carrera[]; gestiones: Gestion[]; grupos: GrupoResumen["grupos"]; onSubmit: (data: Record<string, unknown>) => void; onUpdate: (id: number, data: Record<string, unknown>) => void; onDelete: (id: number) => void }) {
+function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDelete }: { carreras: Carrera[]; gestiones: Gestion[]; grupos: GrupoResumen["grupos"]; onSubmit: (data: Record<string, unknown>) => Promise<void> | void; onUpdate: (id: number, data: Record<string, unknown>) => Promise<void> | void; onDelete: (id: number) => Promise<void> | void }) {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [estado, setEstado] = useState("");
   const [gestion, setGestion] = useState("");
   const [carrera, setCarrera] = useState("");
+  const [page, setPage] = useState(1);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [pageData, setPageData] = useState<PaginatedResponse<Postulante>>({
+    data: [],
+    current_page: 1,
+    per_page: 20,
+    total: 0,
+    last_page: 1,
+    from: null,
+    to: null,
+  });
   const [editing, setEditing] = useState<Postulante | null>(null);
   const [deleting, setDeleting] = useState<Postulante | null>(null);
-  const filtered = rows.filter((row) => {
-    const matchesSearch = `${row.ci} ${row.nombres} ${row.apellidos} ${row.correo}`.toLowerCase().includes(query.toLowerCase());
-    const matchesEstado = estado ? row.estado === estado : true;
-    const matchesGestion = gestion ? row.gestion === gestion || row.gestion_id === gestion : true;
-    const matchesCarrera = carrera ? row.carrera_opcion_1 === carrera || row.carrera_opcion_2 === carrera : true;
-    return matchesSearch && matchesEstado && matchesGestion && matchesCarrera;
-  });
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPostulantes() {
+      setLoadingRows(true);
+      const params = new URLSearchParams({ page: String(page), per_page: "20" });
+      if (debouncedQuery.trim()) params.set("search", debouncedQuery.trim());
+      if (estado) params.set("estado", estado);
+      if (gestion) params.set("gestion_id", gestion);
+      if (carrera) params.set("carrera_id", carrera);
+
+      try {
+        const response = await apiGet<PaginatedResponse<Postulante>>(`/admin/postulantes?${params.toString()}`);
+        if (!cancelled) setPageData(response);
+      } finally {
+        if (!cancelled) setLoadingRows(false);
+      }
+    }
+
+    loadPostulantes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page, debouncedQuery, estado, gestion, carrera, refreshVersion]);
+
+  function resetPage() {
+    setPage(1);
+  }
+
+  async function submitAndRefresh(payload: Record<string, unknown>) {
+    await Promise.resolve(onSubmit(payload));
+    setRefreshVersion((value) => value + 1);
+  }
+
+  async function updateAndRefresh(id: number, payload: Record<string, unknown>) {
+    await Promise.resolve(onUpdate(id, payload));
+    setRefreshVersion((value) => value + 1);
+  }
+
+  async function deleteAndRefresh(id: number) {
+    await Promise.resolve(onDelete(id));
+    setRefreshVersion((value) => value + 1);
+  }
 
   return (
     <>
-      <PostulanteWizard gestiones={gestiones} carreras={carreras} onSubmit={onSubmit} />
+      <PostulanteWizard gestiones={gestiones} carreras={carreras} onSubmit={submitAndRefresh} />
 
       <div className="mt-6 grid gap-3 rounded-lg bg-white p-4 shadow-sm md:grid-cols-[1fr_180px_180px_220px]">
         <div className="flex items-center gap-3">
           <Search className="text-slate-500" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} className="h-11 flex-1 rounded-lg border border-slate-300 px-3" placeholder="Buscar por CI, nombre, apellido o correo" />
+          <input value={query} onChange={(event) => { setQuery(event.target.value); resetPage(); }} className="h-11 flex-1 rounded-lg border border-slate-300 px-3" placeholder="Buscar por CI, nombre, apellido o correo" />
         </div>
-        <select value={estado} onChange={(event) => setEstado(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
+        <select value={estado} onChange={(event) => { setEstado(event.target.value); resetPage(); }} className="h-11 rounded-lg border border-slate-300 px-3">
           <option value="">Todos los estados</option>
           <option>REGISTRADO</option>
           <option>INSCRITO</option>
           <option>RETIRADO</option>
           <option>ANULADO</option>
         </select>
-        <select value={gestion} onChange={(event) => setGestion(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
+        <select value={gestion} onChange={(event) => { setGestion(event.target.value); resetPage(); }} className="h-11 rounded-lg border border-slate-300 px-3">
           <option value="">Todas las gestiones</option>
           {gestiones.map((item) => <option key={item.gestion_id} value={item.gestion_id}>{item.gestion_id}</option>)}
         </select>
-        <select value={carrera} onChange={(event) => setCarrera(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
+        <select value={carrera} onChange={(event) => { setCarrera(event.target.value); resetPage(); }} className="h-11 rounded-lg border border-slate-300 px-3">
           <option value="">Todas las carreras</option>
-          {carreras.map((item) => <option key={item.carrera_id} value={item.nombre}>{item.nombre}</option>)}
+          {carreras.map((item) => <option key={item.carrera_id} value={item.carrera_id}>{item.nombre}</option>)}
         </select>
       </div>
 
+      {loadingRows && <div className="mt-4 rounded-lg bg-blue-50 p-4 font-bold text-blue-900">Cargando postulantes...</div>}
       <Table
         columns={["postulante_id", "ci", "nombres", "apellidos", "grupo_asignado", "correo", "carrera_opcion_1", "carrera_opcion_2", "estado"]}
-        rows={filtered as unknown as Array<Record<string, unknown>>}
+        rows={pageData.data as unknown as Array<Record<string, unknown>>}
         compact
+        paginated={false}
         actions={(row) => (
           <div className="flex gap-2">
             <button onClick={() => setEditing(row as unknown as Postulante)} className="rounded-lg bg-blue-700 p-2 text-white"><Pencil size={18} /></button>
@@ -1360,14 +1430,15 @@ function CrudPostulante({ rows, carreras, gestiones, grupos, onSubmit, onUpdate,
           </div>
         )}
       />
+      <PaginationControls page={pageData.current_page} lastPage={pageData.last_page} total={pageData.total} from={pageData.from} to={pageData.to} onPageChange={setPage} />
 
-      {editing && <EditPostulanteModal postulante={editing} grupos={grupos} onClose={() => setEditing(null)} onSubmit={(payload) => { onUpdate(editing.postulante_id, payload); setEditing(null); }} />}
+      {editing && <EditPostulanteModal postulante={editing} grupos={grupos} onClose={() => setEditing(null)} onSubmit={(payload) => { updateAndRefresh(editing.postulante_id, payload); setEditing(null); }} />}
       {deleting && (
         <Modal title="Eliminar postulante" onClose={() => setDeleting(null)}>
           <p className="text-lg">¿Estas seguro de eliminar al postulante {deleting.nombres} {deleting.apellidos}?</p>
           <div className="mt-6 flex justify-end gap-3">
             <button onClick={() => setDeleting(null)} className="rounded-lg border px-5 py-3 font-bold">Cancelar</button>
-            <button onClick={() => { onDelete(deleting.postulante_id); setDeleting(null); }} className="rounded-lg bg-red-700 px-5 py-3 font-bold text-white">Eliminar</button>
+            <button onClick={() => { deleteAndRefresh(deleting.postulante_id); setDeleting(null); }} className="rounded-lg bg-red-700 px-5 py-3 font-bold text-white">Eliminar</button>
           </div>
         </Modal>
       )}
@@ -1376,7 +1447,7 @@ function CrudPostulante({ rows, carreras, gestiones, grupos, onSubmit, onUpdate,
 }
 
 // MODULO POSTULANTES FORMULARIO - asistente de 5 pasos con confirmacion de datos.
-function PostulanteWizard({ gestiones, carreras, onSubmit }: { gestiones: Gestion[]; carreras: Carrera[]; onSubmit: (data: Record<string, unknown>) => void }) {
+function PostulanteWizard({ gestiones, carreras, onSubmit }: { gestiones: Gestion[]; carreras: Carrera[]; onSubmit: (data: Record<string, unknown>) => Promise<void> | void }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [step, setStep] = useState(0);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
@@ -1528,32 +1599,72 @@ function EditPostulanteModal({ postulante, grupos, onClose, onSubmit }: { postul
   );
 }
 
-// MODULO EXAMENES - carga/guarda tres notas por materia y muestra promedio/estado.
-function ExamenesModule({ postulantes }: { postulantes: PromedioPostulante[] }) {
-  const [selected, setSelected] = useState<number | null>(postulantes[0]?.postulante_id ?? null);
+// MODULO EXAMENES - carga/guarda tres notas por materia y lista postulantes paginados desde backend.
+function ExamenesModule({ gestiones }: { gestiones: Gestion[] }) {
+  const [selected, setSelected] = useState<number | null>(null);
   const [data, setData] = useState<NotaResponse | null>(null);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [estadoFilter, setEstadoFilter] = useState("");
   const [sexoFilter, setSexoFilter] = useState("");
   const [gestionFilter, setGestionFilter] = useState("");
-  const gestionesDisponibles = Array.from(new Set(postulantes.map((postulante) => postulante.gestion_id))).sort().reverse();
-  const filteredPostulantes = postulantes.filter((postulante) => {
-    const estadoAcademico = postulante.estado_academico ?? postulante.estado_academico_calculado;
-    const estadoAdmision = postulante.estado_admision ?? "";
-    const matchesQuery = `${postulante.ci} ${postulante.nombres} ${postulante.apellidos}`.toLowerCase().includes(query.toLowerCase());
-    const matchesGestion = gestionFilter ? postulante.gestion_id === gestionFilter : true;
-    const matchesSexo = sexoFilter ? postulante.sexo === sexoFilter : true;
-    const matchesEstado = estadoFilter === "ADMITIDO"
-      ? estadoAdmision === "ADMITIDO"
-      : estadoFilter === "SIN_CUPO"
-        ? estadoAdmision === "SIN_CUPO"
-        : estadoFilter === "REPROBADO"
-          ? estadoAcademico === "REPROBADO"
-          : true;
-
-    return matchesQuery && matchesGestion && matchesSexo && matchesEstado;
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
+  const [listLoading, setListLoading] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [pageData, setPageData] = useState<PaginatedResponse<PromedioPostulante>>({
+    data: [],
+    current_page: 1,
+    per_page: 50,
+    total: 0,
+    last_page: 1,
+    from: null,
+    to: null,
   });
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPostulantes() {
+      setListLoading(true);
+      const params = new URLSearchParams({
+        page: String(page),
+        per_page: String(perPage),
+      });
+
+      if (debouncedQuery.trim()) params.set("search", debouncedQuery.trim());
+      if (gestionFilter) params.set("gestion_id", gestionFilter);
+      if (sexoFilter) params.set("sexo", sexoFilter);
+      if (estadoFilter) params.set("estado", estadoFilter);
+
+      try {
+        const response = await apiGet<PaginatedResponse<PromedioPostulante>>(`/admin/examenes/postulantes?${params.toString()}`);
+        if (!cancelled) {
+          setPageData(response);
+          setMessage("");
+        }
+      } catch {
+        if (!cancelled) setMessage("No se pudo cargar la lista de postulantes.");
+      } finally {
+        if (!cancelled) setListLoading(false);
+      }
+    }
+
+    loadPostulantes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page, perPage, debouncedQuery, gestionFilter, sexoFilter, estadoFilter, refreshVersion]);
 
   useEffect(() => {
     if (selected) {
@@ -1576,6 +1687,11 @@ function ExamenesModule({ postulantes }: { postulantes: PromedioPostulante[] }) 
     const updated = await apiPost<NotaResponse>(`/admin/examenes/notas/${selected}`, { notas });
     setData(updated);
     setMessage("Notas guardadas. Promedio y estado recalculados.");
+    setRefreshVersion((value) => value + 1);
+  }
+
+  function resetToFirstPage() {
+    setPage(1);
   }
 
   return (
@@ -1584,31 +1700,38 @@ function ExamenesModule({ postulantes }: { postulantes: PromedioPostulante[] }) 
         <h2 className="text-xl font-extrabold">Postulantes</h2>
         <div className="mt-4 flex items-center gap-3 rounded-lg border border-slate-300 px-3">
           <Search className="text-slate-500" size={18} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} className="h-11 flex-1 outline-none" placeholder="Buscar por nombre o CI" />
+          <input value={query} onChange={(event) => { setQuery(event.target.value); resetToFirstPage(); }} className="h-11 flex-1 outline-none" placeholder="Buscar por nombre o CI" />
         </div>
         <div className="mt-4 grid gap-3">
-          <select value={estadoFilter} onChange={(event) => setEstadoFilter(event.target.value)} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
+          <select value={estadoFilter} onChange={(event) => { setEstadoFilter(event.target.value); resetToFirstPage(); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
             <option value="">Todos los estados</option>
             <option value="ADMITIDO">Aprobados admitidos</option>
             <option value="SIN_CUPO">Aprobados sin cupo</option>
             <option value="REPROBADO">Reprobados</option>
           </select>
-          <select value={sexoFilter} onChange={(event) => setSexoFilter(event.target.value)} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
+          <select value={sexoFilter} onChange={(event) => { setSexoFilter(event.target.value); resetToFirstPage(); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
             <option value="">Todos los sexos</option>
             <option value="M">Masculino</option>
             <option value="F">Femenino</option>
             <option value="OTRO">Otro</option>
           </select>
-          <select value={gestionFilter} onChange={(event) => setGestionFilter(event.target.value)} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
+          <select value={gestionFilter} onChange={(event) => { setGestionFilter(event.target.value); resetToFirstPage(); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
             <option value="">Todas las gestiones</option>
-            {gestionesDisponibles.map((gestion) => <option key={gestion} value={gestion}>{gestion}</option>)}
+            {gestiones.map((gestion) => <option key={gestion.gestion_id} value={gestion.gestion_id}>{gestion.gestion_id}</option>)}
+          </select>
+          <select value={perPage} onChange={(event) => { setPerPage(Number(event.target.value)); setPage(1); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
+            <option value={10}>10 / pag.</option>
+            <option value={25}>25 / pag.</option>
+            <option value={50}>50 / pag.</option>
+            <option value={100}>100 / pag.</option>
           </select>
           <div className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600">
-            Mostrando {filteredPostulantes.length} de {postulantes.length}
+            Total {pageData.total} resultados
           </div>
         </div>
         <div className="mt-4 max-h-[620px] space-y-2 overflow-auto">
-          {filteredPostulantes.map((postulante) => (
+          {listLoading && <p className="rounded-lg bg-blue-50 p-4 text-sm font-bold text-blue-900">Cargando postulantes...</p>}
+          {!listLoading && pageData.data.map((postulante) => (
             <button key={postulante.postulante_id} onClick={() => { setData(null); setMessage(""); setSelected(postulante.postulante_id); }} className={`w-full rounded-lg p-3 text-left ${selected === postulante.postulante_id ? "bg-blue-700 text-white" : "bg-slate-100"}`}>
               <strong>{postulante.apellidos} {postulante.nombres}</strong>
               <p className="text-sm">CI: {postulante.ci}</p>
@@ -1616,8 +1739,9 @@ function ExamenesModule({ postulantes }: { postulantes: PromedioPostulante[] }) 
               <p className="text-sm font-bold">{postulante.estado_admision ?? postulante.estado_academico_calculado}</p>
             </button>
           ))}
-          {filteredPostulantes.length === 0 && <p className="rounded-lg bg-slate-100 p-4 text-sm font-semibold text-slate-500">No hay postulantes con esos filtros.</p>}
+          {!listLoading && pageData.data.length === 0 && <p className="rounded-lg bg-slate-100 p-4 text-sm font-semibold text-slate-500">No hay postulantes con esos filtros.</p>}
         </div>
+        <PaginationControls page={pageData.current_page} lastPage={pageData.last_page} total={pageData.total} from={pageData.from} to={pageData.to} onPageChange={setPage} />
       </div>
 
       <div className="rounded-lg bg-white p-6 shadow-sm">
@@ -1643,6 +1767,79 @@ function ExamenesModule({ postulantes }: { postulantes: PromedioPostulante[] }) 
       </div>
     </div>
   );
+}
+
+function PaginationControls({ page, lastPage, total, from, to, onPageChange }: { page: number; lastPage: number; total: number; from: number | null; to: number | null; onPageChange: (page: number) => void }) {
+  const [jump, setJump] = useState("");
+  const pages = paginationWindow(page, lastPage);
+  const disabledPrev = page <= 1;
+  const disabledNext = page >= lastPage;
+
+  function go(target: number) {
+    onPageChange(Math.min(Math.max(target, 1), Math.max(lastPage, 1)));
+  }
+
+  function submitJump(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const target = Number(jump);
+    if (!Number.isNaN(target) && target > 0) {
+      go(target);
+      setJump("");
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-600">
+        <span>Total {total} resultados</span>
+        <span>Mostrando {from ?? 0}-{to ?? 0}</span>
+        <span>Pag. {page}/{Math.max(lastPage, 1)}</span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button disabled={disabledPrev} onClick={() => go(1)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
+          <ChevronLeft size={16} />
+        </button>
+        <button disabled={disabledPrev} onClick={() => go(page - 1)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
+          <ChevronLeft size={16} />
+        </button>
+        {pages.map((item, index) => item === "..."
+          ? <span key={`ellipsis-${index}`} className="px-2 font-bold text-slate-400">...</span>
+          : (
+            <button key={item} onClick={() => go(item)} className={`h-9 min-w-9 rounded border px-3 font-bold ${item === page ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-700"}`}>
+              {item}
+            </button>
+          ))}
+        <button disabled={disabledNext} onClick={() => go(page + 1)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
+          <ChevronRight size={16} />
+        </button>
+        <button disabled={disabledNext} onClick={() => go(lastPage)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
+          <ChevronRight size={16} />
+        </button>
+        <form onSubmit={submitJump} className="ml-auto flex items-center gap-2">
+          <span className="text-sm font-bold text-slate-600">Ir a</span>
+          <input value={jump} onChange={(event) => setJump(event.target.value)} className="h-9 w-16 rounded border border-slate-300 px-2 text-center font-bold" inputMode="numeric" />
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function paginationWindow(page: number, lastPage: number): Array<number | "..."> {
+  if (lastPage <= 8) {
+    return Array.from({ length: lastPage }, (_, index) => index + 1);
+  }
+
+  const visible = new Set([1, lastPage, page - 2, page - 1, page, page + 1, page + 2].filter((value) => value >= 1 && value <= lastPage));
+  const sorted = Array.from(visible).sort((a, b) => a - b);
+  const result: Array<number | "..."> = [];
+
+  sorted.forEach((value, index) => {
+    const previous = sorted[index - 1];
+    if (previous && value - previous > 1) result.push("...");
+    result.push(value);
+  });
+
+  return result;
 }
 
 function ResultadoAdmisionCard({ resultado }: { resultado?: PromedioPostulante }) {

@@ -172,6 +172,16 @@ export type PromedioPostulante = {
   carrera_admitida?: string | null;
 };
 
+export type PaginatedResponse<T> = {
+  data: T[];
+  current_page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+  from: number | null;
+  to: number | null;
+};
+
 export type CupoCarrera = {
   gestion_id: string;
   gestion: string;

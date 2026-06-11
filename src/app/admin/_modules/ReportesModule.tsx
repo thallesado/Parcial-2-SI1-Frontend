@@ -27,16 +27,28 @@ export function ReportesModule({ gestiones }: { gestiones: Gestion[] }) {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
     const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
     if (gestion) params.set("gestion_id", gestion);
 
-    apiGet<PaginatedResponse<Record<string, unknown>>>(`/admin/reportes/${tipo}?${params.toString()}`)
+    apiGet<PaginatedResponse<Record<string, unknown>> | Array<Record<string, unknown>>>(`/admin/reportes/${tipo}?${params.toString()}`)
       .then((data) => {
-        setRows(data.data);
-        setPageData(data);
+        if (cancelled) return;
+        const safeRows = Array.isArray(data) ? data : data.data ?? [];
+        setRows(safeRows);
+        setPageData(Array.isArray(data) ? null : data);
         setMessage("");
       })
-      .catch(() => setMessage("No se pudo cargar el reporte."));
+      .catch((error) => {
+        if (cancelled) return;
+        setRows([]);
+        setPageData(null);
+        setMessage(error instanceof Error ? error.message : "No se pudo cargar el reporte.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [tipo, page, perPage, gestion]);
 
   const columns = rows[0] ? Object.keys(rows[0]) : [];

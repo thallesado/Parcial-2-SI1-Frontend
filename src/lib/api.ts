@@ -1,4 +1,7 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api";
+const LOCAL_API_URL = "http://127.0.0.1:8000/api";
+const RENDER_API_URL = "https://parcial-2-si1-backend.onrender.com/api";
+
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? (process.env.NODE_ENV === "production" ? RENDER_API_URL : LOCAL_API_URL);
 
 // API CLIENTE - agrega automaticamente el token del administrador a las rutas protegidas.
 // Si el backend cambia de puerto o dominio, modifica NEXT_PUBLIC_API_URL en frontend/.env.local.

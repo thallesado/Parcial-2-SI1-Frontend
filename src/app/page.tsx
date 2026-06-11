@@ -26,7 +26,8 @@ const requisitos = [
 
 async function getHomeData(): Promise<HomeData> {
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api"}/portal`, { cache: "no-store" });
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? (process.env.NODE_ENV === "production" ? "https://parcial-2-si1-backend.onrender.com/api" : "http://127.0.0.1:8000/api");
+    const response = await fetch(`${apiUrl}/portal`, { cache: "no-store" });
     if (!response.ok) throw new Error("home");
     const data = await response.json();
     return { carreras: data.carreras ?? [] };

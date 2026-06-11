@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend Next.js
 
-## Getting Started
+Esta carpeta contiene la interfaz web del sistema.
 
-First, run the development server:
+Incluye:
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Portal publico de la universidad.
+- Formulario publico de inscripcion.
+- Panel administrativo.
+- Consumo de API Laravel.
+- Componentes de tablas, paginacion y modulos administrativos.
+
+## Tecnologias
+
+- React 19
+- Next.js 16
+- TypeScript
+- TailwindCSS
+- lucide-react
+
+## Instalacion
+
+```powershell
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Configuracion
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Crea `frontend/.env.local` si necesitas indicar la URL del backend:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api
+```
 
-## Learn More
+En produccion debe apuntar al backend desplegado en Render:
 
-To learn more about Next.js, take a look at the following resources:
+```env
+NEXT_PUBLIC_API_URL=https://TU_BACKEND_RENDER.onrender.com/api
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Ejecutar localmente
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```powershell
+npm run dev:stable
+```
 
-## Deploy on Vercel
+URLs:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```text
+Portal publico:       http://127.0.0.1:3000
+Panel administrativo: http://127.0.0.1:3000/admin
+Inscripcion publica:  http://127.0.0.1:3000/inscripcion
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Comandos utiles
+
+```powershell
+npm run lint
+npm run build
+npm run dev:stable
+```
+
+## Estructura
+
+- `src/app/page.tsx`: pagina publica de inicio.
+- `src/app/admin/page.tsx`: panel administrativo.
+- `src/app/admin/_components/`: componentes reutilizables del panel.
+- `src/app/admin/_modules/`: modulos separados del panel.
+- `src/app/inscripcion/page.tsx`: formulario publico por pasos.
+- `src/lib/api.ts`: cliente HTTP y tipos compartidos.
+- `public/imagenes/`: imagenes del portal publico.
+
+## Imagenes
+
+Las imagenes que se pueden usar directamente con rutas como `/imagenes/logo_uagrm.png` estan en:
+
+```text
+public/imagenes/
+```
+
+La portada publica usa constantes en:
+
+```text
+src/app/page.tsx
+```
+
+Busca:
+
+```ts
+const HERO_BACKGROUND_URL = "/imagenes/curichi_uagrm.jpg";
+const UAGRM_LOGO_URL = "/imagenes/logo_uagrm.png";
+```
+
+## Relacion con backend
+
+El frontend no se conecta directamente a PostgreSQL. Siempre llama a Laravel mediante `src/lib/api.ts`.
+
+Flujo:
+
+```text
+Pantalla React -> apiGet/apiSend -> Laravel API -> PostgreSQL
+```

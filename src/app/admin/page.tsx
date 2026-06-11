@@ -5,11 +5,9 @@ import {
   BriefcaseBusiness,
   Building2,
   CalendarDays,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
-  CircleAlert,
   Eye,
   FileText,
   History,
@@ -25,7 +23,6 @@ import {
   Trash2,
   Users,
   X,
-  XCircle,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -43,40 +40,18 @@ import {
   DocenteDisponible,
   Gestion,
   GrupoResumen,
+  HorarioClase,
+  HorariosResponse,
   Materia,
-  NotasMateria,
   PaginatedResponse,
   Postulante,
-  PromedioPostulante,
 } from "@/lib/api";
-
-type Dashboard = {
-  gestion_activa?: Gestion;
-  resumen?: {
-    total_inscritos?: number;
-    total_aprobados?: number;
-    total_reprobados?: number;
-    total_grupos_habilitados?: number;
-  };
-  estado_postulantes?: {
-    admitidos?: number;
-    aprobados_sin_cupo?: number;
-    reprobados?: number;
-  };
-  inscripciones_mes?: Array<{ mes: string; total: number }>;
-  carreras_inscritos?: Array<{ nombre: string; total: number }>;
-  actividad_reciente?: Array<{ accion: string; descripcion: string; fecha_hora: string }>;
-  carreras: number;
-  materias: number;
-  docentes: number;
-  aulas: number;
-};
-
-type NotaResponse = {
-  postulante: Postulante;
-  resultado?: PromedioPostulante;
-  materias: NotasMateria[];
-};
+import { Table } from "./_components/AdminTable";
+import { PaginationControls } from "./_components/PaginationControls";
+import { BitacoraModule } from "./_modules/BitacoraModule";
+import { DashboardView, type Dashboard } from "./_modules/DashboardModule";
+import { ExamenesModule } from "./_modules/ExamenesModule";
+import { ReportesModule } from "./_modules/ReportesModule";
 
 // MENU ADMIN - cada id se usa para decidir que modulo renderizar en el panel.
 // Para crear un nuevo modulo, agrega aqui una opcion y luego su render en AdminPage.
@@ -124,6 +99,12 @@ export default function AdminPage() {
       loadAll();
     }
   }, [authenticated]);
+
+  useEffect(() => {
+    if (authenticated && active === "bitacora") {
+      loadBitacora().catch(() => setMessage("No se pudo cargar la bitacora."));
+    }
+  }, [authenticated, active]);
 
   // SESION INACTIVA - si no hay movimiento por 5 minutos, borra token y vuelve al login.
   useEffect(() => {
@@ -179,7 +160,7 @@ export default function AdminPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [dash, ges, car, mat, au, gru, doc, bit, cup] = await Promise.all([
+      const [dash, ges, car, mat, au, gru, doc, cup] = await Promise.all([
         apiGet<Dashboard>("/admin/dashboard"),
         apiGet<Gestion[]>("/admin/gestiones"),
         apiGet<Carrera[]>("/admin/carreras"),
@@ -187,7 +168,6 @@ export default function AdminPage() {
         apiGet<Aula[]>("/admin/aulas"),
         apiGet<GrupoResumen>("/admin/grupos/resumen"),
         apiGet<Docente[]>("/admin/docentes"),
-        apiGet<Bitacora[]>("/admin/bitacora"),
         apiGet<CupoCarrera[]>("/admin/cupos"),
       ]);
       setDashboard(dash);
@@ -197,7 +177,6 @@ export default function AdminPage() {
       setAulas(au);
       setGruposResumen(gru);
       setDocentes(doc);
-      setBitacoras(bit);
       setCupos(cup);
     } catch {
       window.localStorage.removeItem("admin_token");
@@ -206,6 +185,12 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // CARGA BITACORA - se ejecuta bajo demanda para no retrasar el ingreso al panel.
+  async function loadBitacora() {
+    const bit = await apiGet<PaginatedResponse<Bitacora>>("/admin/bitacora?per_page=20");
+    setBitacoras(bit.data);
   }
 
   // CREAR REGISTROS - helper comun para formularios POST.
@@ -333,7 +318,7 @@ export default function AdminPage() {
           )}
           {active === "examenes" && <ExamenesModule gestiones={gestiones} />}
           {active === "bitacora" && <BitacoraModule rows={bitacoras} />}
-          {active === "reportes" && <ReportesModule />}
+          {active === "reportes" && <ReportesModule gestiones={gestiones} />}
         </div>
       </section>
     </main>
@@ -383,86 +368,6 @@ function LoginScreen({ message, validating, timeoutNotice, onDismissTimeout, onS
   );
 }
 
-// MODULO DASHBOARD - tablero visual del proceso de postulantes.
-function DashboardView({ dashboard }: { dashboard: Dashboard }) {
-  const totalInscritos = dashboard.resumen?.total_inscritos ?? 0;
-  const admitidos = dashboard.estado_postulantes?.admitidos ?? 0;
-  const sinCupo = dashboard.estado_postulantes?.aprobados_sin_cupo ?? 0;
-  const reprobados = dashboard.estado_postulantes?.reprobados ?? 0;
-  const totalEvaluados = admitidos + sinCupo + reprobados;
-  const months = dashboard.inscripciones_mes?.length ? dashboard.inscripciones_mes : [{ mes: "Sin datos", total: 0 }];
-
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <Metric label="Inscritos" value={totalInscritos} icon={Users} color="blue" />
-        <Metric label="Admitidos" value={admitidos} icon={CheckCircle2} color="green" />
-        <Metric label="Sin cupo" value={sinCupo} icon={CircleAlert} color="amber" />
-        <Metric label="Reprobados" value={reprobados} icon={XCircle} color="red" />
-        <Metric label="Grupos" value={dashboard.resumen?.total_grupos_habilitados ?? 0} icon={Building2} color="violet" />
-        <Metric label="Docentes" value={dashboard.docentes} icon={School} color="cyan" />
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[1.15fr_0.8fr_1fr]">
-        <Panel title="Inscripciones por mes">
-          <LineChart data={months} />
-        </Panel>
-
-        <Panel title="Estado de postulantes">
-          <DonutChart total={totalEvaluados} admitidos={admitidos} sinCupo={sinCupo} reprobados={reprobados} />
-        </Panel>
-
-        <Panel title="Carreras con mas postulantes">
-          <BarList rows={dashboard.carreras_inscritos ?? []} />
-        </Panel>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[1fr_0.9fr_0.75fr]">
-        <div className="rounded-lg border border-blue-100 bg-blue-50 p-6 shadow-sm">
-          <div className="flex items-start gap-5">
-            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-blue-700 text-white"><CalendarDays size={26} /></div>
-            <div className="min-w-0">
-              <p className="font-bold text-blue-900">Gestion activa</p>
-              <h2 className="mt-2 text-3xl font-extrabold text-slate-950">{dashboard.gestion_activa?.gestion_id ?? "Sin gestion"}</h2>
-              <p className="mt-3 text-slate-600">{dashboard.gestion_activa?.nombre ?? "No hay gestion academica registrada."}</p>
-            </div>
-          </div>
-          <div className="mt-6 grid gap-3 border-t border-blue-100 pt-5 text-sm font-semibold text-slate-600 sm:grid-cols-2">
-            <span>Carreras activas: <b className="text-slate-950">{dashboard.carreras}</b></span>
-            <span>Materias activas: <b className="text-slate-950">{dashboard.materias}</b></span>
-            <span>Aulas activas: <b className="text-slate-950">{dashboard.aulas}</b></span>
-            <span>Estado: <b className="text-green-700">{dashboard.gestion_activa?.estado ?? "N/D"}</b></span>
-          </div>
-        </div>
-
-        <Panel title="Actividad reciente">
-          <div className="space-y-4">
-            {(dashboard.actividad_reciente ?? []).slice(0, 5).map((item, index) => (
-              <div key={`${item.fecha_hora}-${index}`} className="flex gap-3">
-                <div className="mt-1 h-2.5 w-2.5 rounded-full bg-blue-600" />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-extrabold text-slate-800">{item.accion}</p>
-                  <p className="line-clamp-2 text-sm text-slate-500">{item.descripcion}</p>
-                </div>
-              </div>
-            ))}
-            {!dashboard.actividad_reciente?.length && <p className="text-sm text-slate-500">Sin movimientos registrados.</p>}
-          </div>
-        </Panel>
-
-        <Panel title="Resumen rapido">
-          <div className="space-y-3 text-sm">
-            <QuickRow label="Postulantes evaluados" value={totalEvaluados} />
-            <QuickRow label="Admitidos a carrera" value={admitidos} />
-            <QuickRow label="Aprobados sin cupo" value={sinCupo} />
-            <QuickRow label="Pendientes de evaluar" value={Math.max(totalInscritos - totalEvaluados, 0)} />
-          </div>
-        </Panel>
-      </div>
-    </div>
-  );
-}
-
 // UI METRICA - tarjeta estatica reutilizada en dashboard y grupos.
 function Metric({ label, value, icon: Icon, color = "blue" }: { label: string; value: number; icon: typeof Users; color?: "blue" | "green" | "amber" | "red" | "violet" | "cyan" }) {
   const colors = {
@@ -483,98 +388,6 @@ function Metric({ label, value, icon: Icon, color = "blue" }: { label: string; v
       <p className="mt-2 text-xs font-semibold text-slate-400">Gestion actual</p>
     </div>
   );
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="rounded-lg border border-slate-100 bg-white p-5 shadow-sm"><h2 className="mb-5 font-extrabold text-slate-800">{title}</h2>{children}</section>;
-}
-
-function LineChart({ data }: { data: Array<{ mes: string; total: number }> }) {
-  const max = Math.max(...data.map((item) => item.total), 1);
-  const points = data.map((item, index) => {
-    const x = data.length === 1 ? 50 : 8 + (index * 84) / (data.length - 1);
-    const y = 82 - (item.total / max) * 58;
-    return { ...item, x, y };
-  });
-  const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  return (
-    <div>
-      <svg viewBox="0 0 100 92" className="h-56 w-full overflow-visible">
-        <path d="M 7 82 H 96" stroke="#e2e8f0" strokeWidth="0.8" />
-        <path d={path} fill="none" stroke="#2563eb" strokeWidth="1.8" />
-        {points.map((point) => (
-          <g key={point.mes}>
-            <circle cx={point.x} cy={point.y} r="2.2" fill="#2563eb" />
-            <text x={point.x} y={point.y - 5} textAnchor="middle" className="fill-blue-700 text-[5px] font-bold">{point.total}</text>
-            <text x={point.x} y="91" textAnchor="middle" className="fill-slate-500 text-[5px]">{point.mes}</text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
-
-function DonutChart({ total, admitidos, sinCupo, reprobados }: { total: number; admitidos: number; sinCupo: number; reprobados: number }) {
-  const radius = 36;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
-  const segments = [
-    { label: "Admitidos", value: admitidos, color: "#22c55e" },
-    { label: "Aprobados sin cupo", value: sinCupo, color: "#f59e0b" },
-    { label: "Reprobados", value: reprobados, color: "#ef4444" },
-  ].map((segment) => {
-    const length = total ? (segment.value / total) * circumference : 0;
-    const current = { ...segment, dash: `${length} ${circumference - length}`, offset };
-    offset -= length;
-    return current;
-  });
-  return (
-    <div className="flex flex-col items-center gap-5 md:flex-row xl:flex-col">
-      <div className="relative h-52 w-52">
-        <svg viewBox="0 0 100 100" className="-rotate-90">
-          <circle cx="50" cy="50" r={radius} fill="none" stroke="#e5e7eb" strokeWidth="14" />
-          {segments.map((segment) => (
-            <circle key={segment.label} cx="50" cy="50" r={radius} fill="none" stroke={segment.color} strokeWidth="14" strokeDasharray={segment.dash} strokeDashoffset={segment.offset} />
-          ))}
-        </svg>
-        <div className="absolute inset-0 grid place-items-center text-center">
-          <div><p className="text-xs font-bold text-slate-400">Total</p><p className="text-2xl font-extrabold">{total}</p></div>
-        </div>
-      </div>
-      <div className="w-full space-y-3">
-        {segments.map((segment) => (
-          <div key={segment.label} className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex items-center gap-2 font-semibold text-slate-600"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: segment.color }} />{segment.label}</span>
-            <b>{segment.value} ({percent(segment.value, total)}%)</b>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BarList({ rows }: { rows: Array<{ nombre: string; total: number }> }) {
-  const max = Math.max(...rows.map((row) => row.total), 1);
-  if (!rows.length) return <p className="text-sm text-slate-500">Sin postulantes registrados.</p>;
-  return (
-    <div className="space-y-4">
-      {rows.map((row) => (
-        <div key={row.nombre} className="grid grid-cols-[minmax(0,1fr)_2.2fr_3rem] items-center gap-3 text-sm">
-          <p className="truncate font-semibold text-slate-600">{row.nombre}</p>
-          <div className="h-4 rounded bg-slate-100"><div className="h-4 rounded bg-blue-700" style={{ width: `${Math.max((row.total / max) * 100, 4)}%` }} /></div>
-          <b className="text-right">{row.total}</b>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function QuickRow({ label, value }: { label: string; value: number }) {
-  return <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-3"><span className="font-semibold text-slate-600">{label}</span><b className="text-slate-950">{value}</b></div>;
-}
-
-function percent(value: number, total: number) {
-  return total ? ((value / total) * 100).toFixed(1) : "0.0";
 }
 
 // UI METRICA BOTON - tarjeta clickeable usada para cambiar vistas en asignacion docente.
@@ -669,6 +482,7 @@ function prettyColumn(column: string): string {
     capacidad_maxima: "Capacidad maxima",
     total_estudiantes: "Total estudiantes",
     fecha_registro: "Fecha de registro",
+    turno: "Turno",
   };
   return labels[column] ?? column.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -744,83 +558,6 @@ function PreviewPanel({ title, description, items }: { title: string; descriptio
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-// UI TABLE - tabla reusable con ordenamiento, acciones y paginacion local de 20 filas.
-function Table({ columns, rows, actions, compact = false, paginated = true, pageSize = 20 }: { columns: string[]; rows: Array<Record<string, unknown>>; actions?: (row: Record<string, unknown>) => React.ReactNode; compact?: boolean; paginated?: boolean; pageSize?: number }) {
-  const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
-  const [page, setPage] = useState(1);
-  const sortedRows = useMemo(() => {
-    if (!sort) return rows;
-
-    return [...rows].sort((a, b) => {
-      const left = a[sort.column];
-      const right = b[sort.column];
-      const leftNumber = Number(left);
-      const rightNumber = Number(right);
-      const result = !Number.isNaN(leftNumber) && !Number.isNaN(rightNumber)
-        ? leftNumber - rightNumber
-        : String(left ?? "").localeCompare(String(right ?? ""));
-
-      return sort.direction === "asc" ? result : -result;
-    });
-  }, [rows, sort]);
-  const lastPage = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const currentPage = Math.min(page, lastPage);
-  const visibleRows = paginated ? sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize) : sortedRows;
-  const from = sortedRows.length === 0 ? null : ((currentPage - 1) * pageSize) + 1;
-  const to = sortedRows.length === 0 ? null : Math.min(currentPage * pageSize, sortedRows.length);
-
-  function toggleSort(column: string) {
-    setSort((current) => current?.column === column
-      ? { column, direction: current.direction === "asc" ? "desc" : "asc" }
-      : { column, direction: "asc" });
-  }
-
-  return (
-    <div className="mt-6 rounded-lg bg-white shadow-sm">
-      <div className="overflow-auto rounded-lg">
-        <table className={`${compact ? "min-w-[980px]" : "min-w-[760px]"} w-full text-left text-sm`}>
-          <thead className="bg-blue-700 text-white">
-            <tr>
-              {columns.map((column) => (
-                <th key={column} className={`${column.endsWith("_id") ? "w-16 px-2" : "px-3"} py-3`}>
-                  <button className="font-bold" onClick={() => toggleSort(column)}>
-                    {prettyColumn(column)}{sort?.column === column ? (sort.direction === "asc" ? " ASC" : " DESC") : ""}
-                  </button>
-                </th>
-              ))}
-              {actions && <th className="w-24 px-3 py-3">Acciones</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleRows.map((row, index) => (
-              <tr key={`${currentPage}-${index}`} className="border-b border-slate-100">
-                {columns.map((column) => (
-                  <td key={column} className={`${column.endsWith("_id") ? "px-2" : "px-3"} py-3 text-slate-700`}>
-                    {column === "grupo_asignado" && !row[column]
-                      ? <span className="font-bold text-red-700">Sin grupo asignado</span>
-                      : String(row[column] ?? "")}
-                  </td>
-                ))}
-                {actions && <td className="px-3 py-3">{actions(row)}</td>}
-              </tr>
-            ))}
-            {visibleRows.length === 0 && (
-              <tr>
-                <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-8 text-center font-semibold text-slate-500">No hay registros para mostrar.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      {paginated && sortedRows.length > pageSize && (
-        <div className="px-4 pb-4">
-          <PaginationControls page={currentPage} lastPage={lastPage} total={sortedRows.length} from={from} to={to} onPageChange={setPage} />
-        </div>
-      )}
     </div>
   );
 }
@@ -918,12 +655,13 @@ function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAu
           <SelectField name="gestion_id" label="Gestion" defaultValue={gestionActual}>{gestiones.map((g) => <option key={g.gestion_id} value={g.gestion_id}>{g.gestion_id}</option>)}</SelectField>
           <Field name="codigo" label="Codigo de grupo" />
           <Field name="capacidad_maxima" label="Capacidad maxima" type="number" defaultValue={70} />
+          <SelectField name="turno" label="Turno"><option>MANANA</option><option>TARDE</option><option>TARDE_NOCHE</option></SelectField>
         </FormShell>
       )}
 
       <div className="rounded-lg bg-white p-5 shadow-sm">
         <h2 className="text-2xl font-extrabold">Grupos habilitados</h2>
-        <Table columns={["grupo_id", "gestion_id", "codigo", "capacidad_maxima", "total_estudiantes", "estado"]} rows={(localResumen?.grupos ?? []) as unknown as Array<Record<string, unknown>>} actions={(row) => (
+        <Table columns={["grupo_id", "gestion_id", "codigo", "turno", "capacidad_maxima", "total_estudiantes", "estado"]} rows={(localResumen?.grupos ?? []) as unknown as Array<Record<string, unknown>>} actions={(row) => (
           <div className="flex gap-2">
             <button title="Ver estudiantes" onClick={() => showStudents(row)} className="rounded-lg bg-blue-700 p-2 text-white"><Eye size={18} /></button>
             <button title="Editar grupo" onClick={() => setEditingGroup(row)} className="rounded-lg bg-slate-700 p-2 text-white"><Pencil size={18} /></button>
@@ -967,6 +705,7 @@ function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAu
           }} className="grid gap-4">
             <Field name="codigo" label="Codigo" defaultValue={String(editingGroup.codigo ?? "")} />
             <Field name="capacidad_maxima" label="Capacidad maxima" type="number" defaultValue={Number(editingGroup.capacidad_maxima ?? 70)} />
+            <SelectField name="turno" label="Turno" defaultValue={String(editingGroup.turno ?? "MANANA")}><option>MANANA</option><option>TARDE</option><option>TARDE_NOCHE</option></SelectField>
             <SelectField name="estado" label="Estado" defaultValue={String(editingGroup.estado ?? "ACTIVO")}><option>ACTIVO</option><option>INACTIVO</option></SelectField>
             <button className="rounded-lg bg-blue-700 px-5 py-3 font-bold text-white">Confirmar cambios</button>
           </form>
@@ -1104,11 +843,22 @@ function DocenteAsignacionModule() {
   const [observacion, setObservacion] = useState("");
   const [message, setMessage] = useState("");
   const [view, setView] = useState<"materias" | "docentes" | "sin_asignar">("materias");
+  const [horarios, setHorarios] = useState<HorarioClase[]>([]);
+  const [aulasHorario, setAulasHorario] = useState<Aula[]>([]);
+  const [aulaId, setAulaId] = useState("");
+  const [dia, setDia] = useState("LUNES");
+  const [horaInicio, setHoraInicio] = useState("07:00");
 
   async function load(gestionId = gestion) {
     const suffix = gestionId ? `?gestion_id=${gestionId}` : "";
-    const response = await apiGet<DocenteAsignacionesResponse>(`/admin/docentes/asignaciones/grupos${suffix}`);
+    const [response, horariosResponse] = await Promise.all([
+      apiGet<DocenteAsignacionesResponse>(`/admin/docentes/asignaciones/grupos${suffix}`),
+      apiGet<HorariosResponse>(`/admin/horarios${suffix}`),
+    ]);
     setData(response);
+    setHorarios(horariosResponse.horarios);
+    setAulasHorario(horariosResponse.aulas);
+    setAulaId((current) => current || horariosResponse.aulas[0]?.aula_id?.toString() || "");
     setGestion(response.gestion?.gestion_id ?? gestionId);
   }
 
@@ -1153,6 +903,30 @@ function DocenteAsignacionModule() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo asignar el docente.");
     }
+  }
+
+  async function saveSchedule() {
+    if (!selected || !aulaId) return;
+    try {
+      await apiPost("/admin/horarios", {
+        grupo_id: selected.grupo_id,
+        materia_id: selected.materia_id,
+        aula_id: Number(aulaId),
+        dia,
+        hora_inicio: horaInicio,
+        hora_fin: addMinutes(horaInicio, 90),
+      });
+      setMessage("Horario agregado correctamente.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo agregar el horario.");
+    }
+  }
+
+  async function deleteSchedule(horarioId: number) {
+    await apiDelete(`/admin/horarios/${horarioId}`);
+    setMessage("Horario eliminado correctamente.");
+    await load();
   }
 
   return (
@@ -1232,12 +1006,30 @@ function DocenteAsignacionModule() {
                 <button onClick={() => setSelected(null)} className="flex-1 rounded-lg border border-slate-300 px-4 py-3 font-bold">Cancelar</button>
                 <button onClick={saveAssignment} className="flex-1 rounded-lg bg-blue-700 px-4 py-3 font-bold text-white">Asignar docente</button>
               </div>
+              <div className="border-t border-slate-200 pt-4">
+                <h4 className="font-extrabold text-blue-950">Agregar horario</h4>
+                <p className="mt-1 text-sm text-slate-600">Bloques de 1h30 entre 07:00 y 20:30.</p>
+                <div className="mt-3 grid gap-3">
+                  <select value={dia} onChange={(event) => setDia(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
+                    {["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"].map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                  <input type="time" min="07:00" max="19:00" step="1800" value={horaInicio} onChange={(event) => setHoraInicio(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3" />
+                  <select value={aulaId} onChange={(event) => setAulaId(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
+                    {aulasHorario.map((aula) => <option key={aula.aula_id} value={aula.aula_id}>{aula.codigo} - cap. {aula.capacidad}</option>)}
+                  </select>
+                  <button type="button" onClick={saveSchedule} className="rounded-lg bg-blue-950 px-4 py-3 font-bold text-white">Agregar bloque</button>
+                </div>
+              </div>
             </div>
           ) : (
             <p className="mt-4 text-slate-600">Selecciona una materia de la tabla para asignar o reasignar docente.</p>
           )}
         </aside>}
       </div>
+      <HorarioGrid
+        horarios={horarios.filter((item) => !grupo || String(item.grupo_id) === grupo)}
+        onDelete={deleteSchedule}
+      />
     </div>
   );
 }
@@ -1270,6 +1062,69 @@ function DocentesDisponiblesList({ rows, materias }: { rows: DocenteDisponible[]
       </div>
     </div>
   );
+}
+
+// MODULO HORARIOS GRID - calendario semanal de grupos, materias, docentes y aulas.
+function HorarioGrid({ horarios, onDelete }: { horarios: HorarioClase[]; onDelete: (horarioId: number) => void }) {
+  const dias = ["LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO"];
+  const horas = ["07:00", "08:30", "10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00"];
+  const colors = ["bg-blue-50 border-blue-100 text-blue-950", "bg-emerald-50 border-emerald-100 text-emerald-950", "bg-amber-50 border-amber-100 text-amber-950", "bg-rose-50 border-rose-100 text-rose-950", "bg-violet-50 border-violet-100 text-violet-950"];
+
+  return (
+    <section className="rounded-lg bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-xl font-extrabold">Horarios de grupos</h3>
+          <p className="mt-1 text-slate-600">Vista semanal de materias programadas. Cada bloque dura 1 hora y 30 minutos.</p>
+        </div>
+        <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">{horarios.length} bloques</span>
+      </div>
+      <div className="mt-5 overflow-auto rounded-lg border border-slate-200">
+        <div className="grid min-w-[980px] grid-cols-[90px_repeat(6,minmax(145px,1fr))]">
+          <div className="border-b border-r border-slate-200 bg-slate-50 p-3 text-sm font-extrabold">Hora</div>
+          {dias.map((dia) => <div key={dia} className="border-b border-r border-slate-200 bg-slate-50 p-3 text-center text-sm font-extrabold">{dia}</div>)}
+          {horas.map((hora) => (
+            <FragmentRow key={hora} hora={hora} dias={dias} horarios={horarios} colors={colors} onDelete={onDelete} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FragmentRow({ hora, dias, horarios, colors, onDelete }: { hora: string; dias: string[]; horarios: HorarioClase[]; colors: string[]; onDelete: (horarioId: number) => void }) {
+  return (
+    <>
+      <div className="min-h-28 border-r border-slate-200 p-3 text-sm font-bold text-slate-600">{hora}<br /><span className="text-xs">{addMinutes(hora, 90)}</span></div>
+      {dias.map((dia, dayIndex) => {
+        const items = horarios.filter((item) => item.dia === dia && item.hora_inicio === hora);
+        return (
+          <div key={`${dia}-${hora}`} className="min-h-28 border-r border-slate-200 p-2">
+            <div className="space-y-2">
+              {items.map((item, index) => (
+                <div key={item.horario_id} className={`rounded-lg border p-2 text-xs ${colors[(dayIndex + index) % colors.length]}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-extrabold">{item.materia}</p>
+                      <p className="mt-1">{item.docente}</p>
+                      <p>{item.grupo} - {item.aula}</p>
+                    </div>
+                    <button title="Eliminar horario" onClick={() => onDelete(item.horario_id)} className="rounded bg-white/80 p-1 text-red-700"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function addMinutes(time: string, minutes: number): string {
+  const [hour, minute] = time.split(":").map(Number);
+  const total = hour * 60 + minute + minutes;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
 // MODULO GESTIONES - alta de gestiones academicas con codigo YYYY-S.
@@ -1596,335 +1451,6 @@ function EditPostulanteModal({ postulante, grupos, onClose, onSubmit }: { postul
         </div>
       </form>
     </Modal>
-  );
-}
-
-// MODULO EXAMENES - carga/guarda tres notas por materia y lista postulantes paginados desde backend.
-function ExamenesModule({ gestiones }: { gestiones: Gestion[] }) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const [data, setData] = useState<NotaResponse | null>(null);
-  const [message, setMessage] = useState("");
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [estadoFilter, setEstadoFilter] = useState("");
-  const [sexoFilter, setSexoFilter] = useState("");
-  const [gestionFilter, setGestionFilter] = useState("");
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(50);
-  const [listLoading, setListLoading] = useState(false);
-  const [refreshVersion, setRefreshVersion] = useState(0);
-  const [pageData, setPageData] = useState<PaginatedResponse<PromedioPostulante>>({
-    data: [],
-    current_page: 1,
-    per_page: 50,
-    total: 0,
-    last_page: 1,
-    from: null,
-    to: null,
-  });
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPostulantes() {
-      setListLoading(true);
-      const params = new URLSearchParams({
-        page: String(page),
-        per_page: String(perPage),
-      });
-
-      if (debouncedQuery.trim()) params.set("search", debouncedQuery.trim());
-      if (gestionFilter) params.set("gestion_id", gestionFilter);
-      if (sexoFilter) params.set("sexo", sexoFilter);
-      if (estadoFilter) params.set("estado", estadoFilter);
-
-      try {
-        const response = await apiGet<PaginatedResponse<PromedioPostulante>>(`/admin/examenes/postulantes?${params.toString()}`);
-        if (!cancelled) {
-          setPageData(response);
-          setMessage("");
-        }
-      } catch {
-        if (!cancelled) setMessage("No se pudo cargar la lista de postulantes.");
-      } finally {
-        if (!cancelled) setListLoading(false);
-      }
-    }
-
-    loadPostulantes();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [page, perPage, debouncedQuery, gestionFilter, sexoFilter, estadoFilter, refreshVersion]);
-
-  useEffect(() => {
-    if (selected) {
-      apiGet<NotaResponse>(`/admin/examenes/notas/${selected}`).then(setData).catch(() => setMessage("No se pudieron cargar las notas."));
-    }
-  }, [selected]);
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selected || !data) return;
-
-    const form = new FormData(event.currentTarget);
-    const notas = data.materias.map((materia) => ({
-      materia_id: materia.materia_id,
-      examen_1: form.get(`${materia.materia_id}_1`) || null,
-      examen_2: form.get(`${materia.materia_id}_2`) || null,
-      examen_3: form.get(`${materia.materia_id}_3`) || null,
-    }));
-
-    const updated = await apiPost<NotaResponse>(`/admin/examenes/notas/${selected}`, { notas });
-    setData(updated);
-    setMessage("Notas guardadas. Promedio y estado recalculados.");
-    setRefreshVersion((value) => value + 1);
-  }
-
-  function resetToFirstPage() {
-    setPage(1);
-  }
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-      <div className="rounded-lg bg-white p-5 shadow-sm">
-        <h2 className="text-xl font-extrabold">Postulantes</h2>
-        <div className="mt-4 flex items-center gap-3 rounded-lg border border-slate-300 px-3">
-          <Search className="text-slate-500" size={18} />
-          <input value={query} onChange={(event) => { setQuery(event.target.value); resetToFirstPage(); }} className="h-11 flex-1 outline-none" placeholder="Buscar por nombre o CI" />
-        </div>
-        <div className="mt-4 grid gap-3">
-          <select value={estadoFilter} onChange={(event) => { setEstadoFilter(event.target.value); resetToFirstPage(); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
-            <option value="">Todos los estados</option>
-            <option value="ADMITIDO">Aprobados admitidos</option>
-            <option value="SIN_CUPO">Aprobados sin cupo</option>
-            <option value="REPROBADO">Reprobados</option>
-          </select>
-          <select value={sexoFilter} onChange={(event) => { setSexoFilter(event.target.value); resetToFirstPage(); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
-            <option value="">Todos los sexos</option>
-            <option value="M">Masculino</option>
-            <option value="F">Femenino</option>
-            <option value="OTRO">Otro</option>
-          </select>
-          <select value={gestionFilter} onChange={(event) => { setGestionFilter(event.target.value); resetToFirstPage(); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
-            <option value="">Todas las gestiones</option>
-            {gestiones.map((gestion) => <option key={gestion.gestion_id} value={gestion.gestion_id}>{gestion.gestion_id}</option>)}
-          </select>
-          <select value={perPage} onChange={(event) => { setPerPage(Number(event.target.value)); setPage(1); }} className="h-11 rounded-lg border border-slate-300 bg-white px-3 font-semibold text-slate-700">
-            <option value={10}>10 / pag.</option>
-            <option value={25}>25 / pag.</option>
-            <option value={50}>50 / pag.</option>
-            <option value={100}>100 / pag.</option>
-          </select>
-          <div className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-600">
-            Total {pageData.total} resultados
-          </div>
-        </div>
-        <div className="mt-4 max-h-[620px] space-y-2 overflow-auto">
-          {listLoading && <p className="rounded-lg bg-blue-50 p-4 text-sm font-bold text-blue-900">Cargando postulantes...</p>}
-          {!listLoading && pageData.data.map((postulante) => (
-            <button key={postulante.postulante_id} onClick={() => { setData(null); setMessage(""); setSelected(postulante.postulante_id); }} className={`w-full rounded-lg p-3 text-left ${selected === postulante.postulante_id ? "bg-blue-700 text-white" : "bg-slate-100"}`}>
-              <strong>{postulante.apellidos} {postulante.nombres}</strong>
-              <p className="text-sm">CI: {postulante.ci}</p>
-              <p className="text-sm">Gestion: {postulante.gestion_id} | Sexo: {postulante.sexo ?? "N/D"}</p>
-              <p className="text-sm font-bold">{postulante.estado_admision ?? postulante.estado_academico_calculado}</p>
-            </button>
-          ))}
-          {!listLoading && pageData.data.length === 0 && <p className="rounded-lg bg-slate-100 p-4 text-sm font-semibold text-slate-500">No hay postulantes con esos filtros.</p>}
-        </div>
-        <PaginationControls page={pageData.current_page} lastPage={pageData.last_page} total={pageData.total} from={pageData.from} to={pageData.to} onPageChange={setPage} />
-      </div>
-
-      <div className="rounded-lg bg-white p-6 shadow-sm">
-        <h2 className="text-2xl font-extrabold">Registro de examenes</h2>
-        {message && <div className="mt-4 rounded-lg bg-blue-50 p-3 font-semibold text-blue-900">{message}</div>}
-        {selected && !data && <div className="mt-6 rounded-lg bg-slate-100 p-8 font-semibold text-slate-600">Cargando notas del postulante...</div>}
-        {data ? (
-          <form onSubmit={save} className="mt-6">
-            <div className="grid gap-4">
-              {data.materias.map((materia) => (
-                <div key={materia.materia_id} className="grid gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-[1fr_120px_120px_120px]">
-                  <h3 className="text-lg font-extrabold">{materia.nombre}</h3>
-                  <Field name={`${materia.materia_id}_1`} label="Examen 1" type="number" defaultValue={materia.examen_1 ?? ""} required={false} />
-                  <Field name={`${materia.materia_id}_2`} label="Examen 2" type="number" defaultValue={materia.examen_2 ?? ""} required={false} />
-                  <Field name={`${materia.materia_id}_3`} label="Examen 3" type="number" defaultValue={materia.examen_3 ?? ""} required={false} />
-                </div>
-              ))}
-            </div>
-            <ResultadoAdmisionCard resultado={data.resultado} />
-            <button className="mt-6 rounded-lg bg-red-700 px-6 py-3 font-bold text-white">Guardar notas</button>
-          </form>
-        ) : <p className="mt-6 text-slate-600">Selecciona un postulante.</p>}
-      </div>
-    </div>
-  );
-}
-
-function PaginationControls({ page, lastPage, total, from, to, onPageChange }: { page: number; lastPage: number; total: number; from: number | null; to: number | null; onPageChange: (page: number) => void }) {
-  const [jump, setJump] = useState("");
-  const pages = paginationWindow(page, lastPage);
-  const disabledPrev = page <= 1;
-  const disabledNext = page >= lastPage;
-
-  function go(target: number) {
-    onPageChange(Math.min(Math.max(target, 1), Math.max(lastPage, 1)));
-  }
-
-  function submitJump(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const target = Number(jump);
-    if (!Number.isNaN(target) && target > 0) {
-      go(target);
-      setJump("");
-    }
-  }
-
-  return (
-    <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
-      <div className="flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-600">
-        <span>Total {total} resultados</span>
-        <span>Mostrando {from ?? 0}-{to ?? 0}</span>
-        <span>Pag. {page}/{Math.max(lastPage, 1)}</span>
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button disabled={disabledPrev} onClick={() => go(1)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
-          <ChevronLeft size={16} />
-        </button>
-        <button disabled={disabledPrev} onClick={() => go(page - 1)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
-          <ChevronLeft size={16} />
-        </button>
-        {pages.map((item, index) => item === "..."
-          ? <span key={`ellipsis-${index}`} className="px-2 font-bold text-slate-400">...</span>
-          : (
-            <button key={item} onClick={() => go(item)} className={`h-9 min-w-9 rounded border px-3 font-bold ${item === page ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-700"}`}>
-              {item}
-            </button>
-          ))}
-        <button disabled={disabledNext} onClick={() => go(page + 1)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
-          <ChevronRight size={16} />
-        </button>
-        <button disabled={disabledNext} onClick={() => go(lastPage)} className="grid h-9 w-9 place-items-center rounded border border-slate-300 font-bold text-slate-700 disabled:opacity-40">
-          <ChevronRight size={16} />
-        </button>
-        <form onSubmit={submitJump} className="ml-auto flex items-center gap-2">
-          <span className="text-sm font-bold text-slate-600">Ir a</span>
-          <input value={jump} onChange={(event) => setJump(event.target.value)} className="h-9 w-16 rounded border border-slate-300 px-2 text-center font-bold" inputMode="numeric" />
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function paginationWindow(page: number, lastPage: number): Array<number | "..."> {
-  if (lastPage <= 8) {
-    return Array.from({ length: lastPage }, (_, index) => index + 1);
-  }
-
-  const visible = new Set([1, lastPage, page - 2, page - 1, page, page + 1, page + 2].filter((value) => value >= 1 && value <= lastPage));
-  const sorted = Array.from(visible).sort((a, b) => a - b);
-  const result: Array<number | "..."> = [];
-
-  sorted.forEach((value, index) => {
-    const previous = sorted[index - 1];
-    if (previous && value - previous > 1) result.push("...");
-    result.push(value);
-  });
-
-  return result;
-}
-
-function ResultadoAdmisionCard({ resultado }: { resultado?: PromedioPostulante }) {
-  const estadoAcademico = resultado?.estado_academico ?? resultado?.estado_academico_calculado ?? "PENDIENTE";
-  const estadoAdmision = resultado?.estado_admision ?? "NO_EVALUADO";
-  const aprobado = estadoAcademico === "APROBADO";
-  const admitido = estadoAdmision === "ADMITIDO";
-  const sinCupo = estadoAdmision === "SIN_CUPO";
-  const color = admitido ? "border-green-200 bg-green-50 text-green-800" : aprobado ? "border-yellow-200 bg-yellow-50 text-yellow-800" : "border-red-200 bg-red-50 text-red-800";
-
-  return (
-    <div className={`mt-6 rounded-lg border p-5 ${color}`}>
-      <p className="text-lg font-extrabold">Promedio final: {resultado?.promedio_final ?? "0.00"}</p>
-      <p className="mt-2 text-lg font-extrabold">Estado academico: {estadoAcademico}</p>
-      <p className="mt-2 font-bold">Estado de admision: {estadoAdmision}</p>
-      {admitido && <p className="mt-2 font-bold">Admitido en: {resultado?.carrera_admitida ?? "Carrera asignada"}</p>}
-      {sinCupo && <p className="mt-2 font-bold">Aprobo academicamente, pero no alcanzo cupo en ninguna de sus dos opciones de carrera.</p>}
-      {!aprobado && <p className="mt-2 font-bold">No alcanzo el promedio minimo de 60 puntos.</p>}
-    </div>
-  );
-}
-
-// MODULO BITACORA - lista acciones administrativas registradas por middleware y auth.
-function BitacoraModule({ rows }: { rows: Bitacora[] }) {
-  const [query, setQuery] = useState("");
-  const filtered = rows.filter((row) => `${row.accion} ${row.tabla_afectada ?? ""} ${row.descripcion} ${row.ip ?? ""}`.toLowerCase().includes(query.toLowerCase()));
-
-  return (
-    <>
-      <div className="rounded-lg bg-white p-5 shadow-sm">
-        <h2 className="text-2xl font-extrabold">Bitacora de movimientos</h2>
-        <p className="mt-2 text-slate-600">Registra inicios y cierres de sesion, consultas y procesos realizados desde el panel administrativo.</p>
-        <div className="mt-5 flex items-center gap-3">
-          <Search className="text-slate-500" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} className="h-11 flex-1 rounded-lg border border-slate-300 px-3" placeholder="Buscar por accion, ruta, descripcion o IP" />
-        </div>
-      </div>
-      <Table
-        columns={["accion_id", "fecha_hora", "accion", "tabla_afectada", "registro_id", "descripcion", "ip"]}
-        rows={filtered as unknown as Array<Record<string, unknown>>}
-      />
-    </>
-  );
-}
-
-const reportes = [
-  ["postulantes", "Lista general de postulantes"],
-  ["aprobados", "Postulantes aprobados"],
-  ["reprobados", "Postulantes reprobados"],
-  ["promedios", "Promedios generales"],
-  ["grupos", "Cantidad de grupos habilitados"],
-  ["estadisticas-materia", "Estadisticas por materia"],
-  ["docentes-grupos", "Docentes por grupos"],
-  ["grupos-aprobados", "Grupos con mayor cantidad de aprobados"],
-] as const;
-
-// MODULO REPORTES - selector de reportes basados en vistas SQL.
-function ReportesModule() {
-  const [tipo, setTipo] = useState("postulantes");
-  const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
-  const [message, setMessage] = useState("");
-
-  useEffect(() => {
-    apiGet<Array<Record<string, unknown>>>(`/admin/reportes/${tipo}`)
-      .then((data) => {
-        setRows(data);
-        setMessage("");
-      })
-      .catch(() => setMessage("No se pudo cargar el reporte."));
-  }, [tipo]);
-
-  const columns = rows[0] ? Object.keys(rows[0]) : [];
-
-  return (
-    <>
-      <div className="rounded-lg bg-white p-5 shadow-sm">
-        <h2 className="text-2xl font-extrabold">Reportes</h2>
-        <p className="mt-2 text-slate-600">Consulta reportes obligatorios del proceso de admision y nivelacion.</p>
-        <select value={tipo} onChange={(event) => setTipo(event.target.value)} className="mt-5 h-11 w-full max-w-md rounded-lg border border-slate-300 px-3">
-          {reportes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-      </div>
-      {message && <div className="mt-6 rounded-lg bg-red-50 p-4 font-bold text-red-700">{message}</div>}
-      {columns.length > 0 ? <Table columns={columns} rows={rows} /> : <div className="mt-6 rounded-lg bg-white p-8 text-slate-600">Sin datos para mostrar.</div>}
-    </>
   );
 }
 

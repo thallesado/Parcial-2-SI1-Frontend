@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api";
 
 // API CLIENTE - agrega automaticamente el token del administrador a las rutas protegidas.
 // Si el backend cambia de puerto o dominio, modifica NEXT_PUBLIC_API_URL en frontend/.env.local.
@@ -9,9 +9,13 @@ function authHeaders(): Record<string, string> {
 }
 
 // API GET - se usa para listar datos: postulantes, carreras, grupos, reportes, etc.
-export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, { cache: "no-store", headers: authHeaders() });
-  if (!response.ok) throw new Error(`Error al consultar ${path}`);
+// Por defecto mantiene no-store para datos administrativos sensibles; el backend ya cachea consultas pesadas.
+export async function apiGet<T>(path: string, options: { cache?: RequestCache } = {}): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, { cache: options.cache ?? "no-store", headers: authHeaders() });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(formatApiError(detail, `Error al consultar ${path}`));
+  }
   return response.json();
 }
 
@@ -58,8 +62,15 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return response.json();
 }
 
+type ApiErrorDetail = {
+  message?: string;
+  error?: string;
+  errors?: string[] | Record<string, string[]>;
+};
+
 // ERRORES API - convierte errores de Laravel a mensajes legibles para el administrador.
-function formatApiError(detail: { message?: string; errors?: string[] | Record<string, string[]> }, fallback: string) {
+// Todas las funciones HTTP pasan por aqui para evitar mensajes tecnicos como validation.unique.
+function formatApiError(detail: ApiErrorDetail, fallback: string) {
   if (Array.isArray(detail.errors)) {
     return detail.errors.map((item) => `- ${item}`).join("\n");
   }
@@ -68,7 +79,7 @@ function formatApiError(detail: { message?: string; errors?: string[] | Record<s
     return Object.values(detail.errors).flat().map((item) => `- ${item}`).join("\n");
   }
 
-  return detail.message ?? fallback;
+  return detail.message ?? detail.error ?? fallback;
 }
 
 // TIPOS FRONTEND - reflejan la estructura JSON que devuelve Laravel.
@@ -109,6 +120,7 @@ export type Grupo = {
   gestion_id: string;
   codigo: string;
   capacidad_maxima: number;
+  turno?: string;
   estado: string;
   total_estudiantes: number;
 };
@@ -221,6 +233,59 @@ export type DocenteAsignacion = {
   materia: string;
   docente: string;
   estado: "ASIGNADO" | "SIN_ASIGNAR";
+};
+
+export type HorarioClase = {
+  horario_id: number;
+  grupo_id: number;
+  materia_id: number;
+  docente_id: number;
+  aula_id: number;
+  gestion_id: string;
+  grupo: string;
+  turno?: string;
+  materia: string;
+  docente: string;
+  aula: string;
+  dia: string;
+  hora_inicio: string;
+  hora_fin: string;
+};
+
+export type HorariosResponse = {
+  horarios: HorarioClase[];
+  aulas: Aula[];
+};
+
+export type InscripcionOpciones = {
+  gestiones: Gestion[];
+  carreras: Array<Pick<Carrera, "carrera_id" | "codigo" | "nombre">>;
+  monto_inscripcion: number;
+  tiempo_pago_segundos: number;
+};
+
+export type BoletaInscripcion = {
+  postulante: Postulante & { gestion?: string; turno?: string };
+  carreras: Array<{ orden: number; codigo: string; nombre: string }>;
+  pago: {
+    pago_id: number;
+    monto: string;
+    metodo: string;
+    numero_comprobante: string;
+    estado: string;
+    pagado_en?: string;
+  };
+  materias: Array<{
+    materia_id: number;
+    codigo: string;
+    nombre: string;
+    docente?: string;
+    dia?: string;
+    hora_inicio?: string;
+    hora_fin?: string;
+    aula?: string;
+  }>;
+  estado_grupo: "ASIGNADO" | "PENDIENTE_DE_GRUPO";
 };
 
 export type DocenteDisponible = {

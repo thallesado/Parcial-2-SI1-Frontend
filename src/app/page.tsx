@@ -90,7 +90,7 @@ export default async function Home() {
           Unete a una comunidad de excelencia academica. Forma parte de la universidad que transforma vidas y construye lideres.
         </p>
         <div className="mt-14 flex flex-col justify-center gap-5 sm:flex-row">
-          <Link className="inline-flex items-center justify-center gap-3 rounded-lg bg-red-700 px-10 py-5 text-xl font-bold text-white" href="/admin">
+          <Link className="inline-flex items-center justify-center gap-3 rounded-lg bg-red-700 px-10 py-5 text-xl font-bold text-white" href="/inscripcion">
             Solicitar Admision <ArrowRight />
           </Link>
           <a className="rounded-lg border-2 border-white px-10 py-5 text-xl font-bold text-white" href="#carreras">Conocer Carreras</a>

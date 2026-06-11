@@ -8,7 +8,8 @@ import { Table } from "../_components/AdminTable";
 // MODULO BITACORA - muestra solo movimientos importantes; las consultas GET ya no se registran.
 export function BitacoraModule({ rows }: { rows: Bitacora[] }) {
   const [query, setQuery] = useState("");
-  const filtered = rows.filter((row) => `${row.accion} ${row.tabla_afectada ?? ""} ${row.descripcion} ${row.ip ?? ""}`.toLowerCase().includes(query.toLowerCase()));
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const filtered = safeRows.filter((row) => `${row.accion} ${row.tabla_afectada ?? ""} ${row.descripcion} ${row.ip ?? ""}`.toLowerCase().includes(query.toLowerCase()));
 
   return (
     <>

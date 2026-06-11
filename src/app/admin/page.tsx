@@ -189,8 +189,8 @@ export default function AdminPage() {
 
   // CARGA BITACORA - se ejecuta bajo demanda para no retrasar el ingreso al panel.
   async function loadBitacora() {
-    const bit = await apiGet<PaginatedResponse<Bitacora>>("/admin/bitacora?per_page=20");
-    setBitacoras(bit.data);
+    const bit = await apiGet<PaginatedResponse<Bitacora> | Bitacora[]>("/admin/bitacora?per_page=20");
+    setBitacoras(Array.isArray(bit) ? bit : bit.data ?? []);
   }
 
   // CREAR REGISTROS - helper comun para formularios POST.
@@ -937,11 +937,11 @@ function DocenteAsignacionModule() {
             <h2 className="text-2xl font-extrabold">Asignacion de docentes a grupos</h2>
             <p className="mt-1 text-slate-600">Administra que docente dictara cada materia programada por grupo.</p>
           </div>
-          <button onClick={() => load()} className="rounded-lg border border-slate-300 px-5 py-3 font-bold text-blue-950">Actualizar</button>
+          <button onClick={() => load().catch(() => setMessage("No se pudo actualizar la asignacion de docentes."))} className="rounded-lg border border-slate-300 px-5 py-3 font-bold text-blue-950">Actualizar</button>
         </div>
         {message && <div className="mt-4 whitespace-pre-line rounded-lg bg-blue-50 p-3 font-semibold text-blue-900">{message}</div>}
         <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <select value={gestion} onChange={(event) => { setGestion(event.target.value); load(event.target.value); }} className="h-11 rounded-lg border border-slate-300 px-3">
+          <select value={gestion} onChange={(event) => { setGestion(event.target.value); load(event.target.value).catch(() => setMessage("No se pudo cargar la gestion seleccionada.")); }} className="h-11 rounded-lg border border-slate-300 px-3">
             {(data?.gestiones ?? []).map((item) => <option key={item.gestion_id} value={item.gestion_id}>{item.gestion_id}</option>)}
           </select>
           <select value={grupo} onChange={(event) => setGrupo(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
@@ -1184,6 +1184,7 @@ function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDel
   const [page, setPage] = useState(1);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [loadingRows, setLoadingRows] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [pageData, setPageData] = useState<PaginatedResponse<Postulante>>({
     data: [],
     current_page: 1,
@@ -1214,13 +1215,18 @@ function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDel
 
       try {
         const response = await apiGet<PaginatedResponse<Postulante>>(`/admin/postulantes?${params.toString()}`);
-        if (!cancelled) setPageData(response);
+        if (!cancelled) {
+          setPageData(response);
+          setLoadError("");
+        }
       } finally {
         if (!cancelled) setLoadingRows(false);
       }
     }
 
-    loadPostulantes();
+    loadPostulantes().catch((error) => {
+      if (!cancelled) setLoadError(error instanceof Error ? error.message : "No se pudo cargar postulantes.");
+    });
 
     return () => {
       cancelled = true;
@@ -1273,6 +1279,7 @@ function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDel
       </div>
 
       {loadingRows && <div className="mt-4 rounded-lg bg-blue-50 p-4 font-bold text-blue-900">Cargando postulantes...</div>}
+      {loadError && <div className="mt-4 rounded-lg bg-red-50 p-4 font-bold text-red-700">{loadError}</div>}
       <Table
         columns={["postulante_id", "ci", "nombres", "apellidos", "grupo_asignado", "correo", "carrera_opcion_1", "carrera_opcion_2", "estado"]}
         rows={pageData.data as unknown as Array<Record<string, unknown>>}

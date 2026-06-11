@@ -893,6 +893,8 @@ function DocenteAsignacionModule() {
   const [aulaId, setAulaId] = useState("");
   const [dia, setDia] = useState("LUNES");
   const [horaInicio, setHoraInicio] = useState("07:00");
+  const [savingAssignment, setSavingAssignment] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   async function load(gestionId = gestion) {
     const suffix = gestionId ? `?gestion_id=${gestionId}` : "";
@@ -933,6 +935,7 @@ function DocenteAsignacionModule() {
 
   async function saveAssignment() {
     if (!selected || !docenteId) return;
+    setSavingAssignment(true);
     try {
       await apiPost("/admin/docentes/asignaciones/grupos", {
         grupo_id: selected.grupo_id,
@@ -947,11 +950,14 @@ function DocenteAsignacionModule() {
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo asignar el docente.");
+    } finally {
+      setSavingAssignment(false);
     }
   }
 
   async function saveSchedule() {
     if (!selected || !aulaId) return;
+    setSavingSchedule(true);
     try {
       await apiPost("/admin/horarios", {
         grupo_id: selected.grupo_id,
@@ -965,6 +971,8 @@ function DocenteAsignacionModule() {
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo agregar el horario.");
+    } finally {
+      setSavingSchedule(false);
     }
   }
 
@@ -1049,7 +1057,9 @@ function DocenteAsignacionModule() {
               </label>
               <div className="flex gap-3">
                 <button onClick={() => setSelected(null)} className="flex-1 rounded-lg border border-slate-300 px-4 py-3 font-bold">Cancelar</button>
-                <button onClick={saveAssignment} className="flex-1 rounded-lg bg-blue-700 px-4 py-3 font-bold text-white">Asignar docente</button>
+                <button onClick={saveAssignment} disabled={savingAssignment} className="flex-1 rounded-lg bg-blue-700 px-4 py-3 font-bold text-white shadow-md transition active:translate-y-px active:shadow-inner disabled:cursor-not-allowed disabled:opacity-60">
+                  {savingAssignment ? "Asignando..." : "Asignar docente"}
+                </button>
               </div>
               <div className="border-t border-slate-200 pt-4">
                 <h4 className="font-extrabold text-blue-950">Agregar horario</h4>
@@ -1062,7 +1072,9 @@ function DocenteAsignacionModule() {
                   <select value={aulaId} onChange={(event) => setAulaId(event.target.value)} className="h-11 rounded-lg border border-slate-300 px-3">
                     {aulasHorario.map((aula) => <option key={aula.aula_id} value={aula.aula_id}>{aula.codigo} - cap. {aula.capacidad}</option>)}
                   </select>
-                  <button type="button" onClick={saveSchedule} className="rounded-lg bg-blue-950 px-4 py-3 font-bold text-white">Agregar bloque</button>
+                  <button type="button" onClick={saveSchedule} disabled={savingSchedule} className="rounded-lg bg-blue-950 px-4 py-3 font-bold text-white shadow-lg shadow-blue-950/25 ring-1 ring-blue-800 transition hover:-translate-y-0.5 hover:shadow-xl active:translate-y-px active:shadow-inner disabled:cursor-not-allowed disabled:opacity-60">
+                    {savingSchedule ? "Agregando bloque..." : "Agregar bloque"}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1374,6 +1386,7 @@ function PostulanteWizard({ gestiones, carreras, onSubmit }: { gestiones: Gestio
   ];
   const next = () => {
     const values = formRef.current ? formValues(formRef.current) : {};
+    setPreview(values);
     const missing = stepFields[step].filter((field) => !values[field] || values[field].trim() === "");
     if (missing.length > 0) {
       setFieldErrors(missing);
@@ -1383,6 +1396,7 @@ function PostulanteWizard({ gestiones, carreras, onSubmit }: { gestiones: Gestio
     setStep((value) => Math.min(value + 1, steps.length - 1));
   };
   const prev = () => {
+    if (formRef.current) setPreview(formValues(formRef.current));
     setFieldErrors([]);
     setStep((value) => Math.max(value - 1, 0));
   };
@@ -1448,8 +1462,8 @@ function PostulanteWizard({ gestiones, carreras, onSubmit }: { gestiones: Gestio
 
       <div className={step === 4 ? "" : "hidden"}>
         <PreviewPanel
-          title="Confirmacion"
-          description="Verifica los datos cargados. Al guardar, el sistema validara campos vacios, CI duplicado y correo electronico."
+          title="Confirmacion de datos"
+          description="Revisa todos los datos ingresados antes de guardar al postulante."
           items={[
             ["Gestion", preview.gestion_id],
             ["CI", preview.ci],

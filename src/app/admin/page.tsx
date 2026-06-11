@@ -31,7 +31,6 @@ import {
   apiPost,
   apiPut,
   Aula,
-  Bitacora,
   Carrera,
   CupoCarrera,
   Docente,
@@ -69,6 +68,16 @@ const sections = [
   { id: "cupos", label: "Cupos", icon: BriefcaseBusiness },
 ];
 
+const menuGroups = [
+  { id: "principal", label: "Principal", items: ["dashboard"] },
+  { id: "postulantes", label: "Postulantes", items: ["postulantes"] },
+  { id: "academico", label: "Academico", items: ["carreras", "materias", "gestiones", "cupos"] },
+  { id: "recursos", label: "Recursos", items: ["docentes", "aulas"] },
+  { id: "evaluacion", label: "Evaluacion y control", items: ["examenes", "reportes", "bitacora"] },
+];
+
+const sectionById = new Map(sections.map((section) => [section.id, section]));
+
 const emptyDashboard: Dashboard = { carreras: 0, materias: 0, docentes: 0, aulas: 0 };
 
 // PANEL ADMINISTRATIVO - componente raiz de toda la administracion.
@@ -83,10 +92,16 @@ export default function AdminPage() {
   const [aulas, setAulas] = useState<Aula[]>([]);
   const [gruposResumen, setGruposResumen] = useState<GrupoResumen | null>(null);
   const [docentes, setDocentes] = useState<Docente[]>([]);
-  const [bitacoras, setBitacoras] = useState<Bitacora[]>([]);
   const [cupos, setCupos] = useState<CupoCarrera[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [openMenuGroups, setOpenMenuGroups] = useState<Record<string, boolean>>({
+    principal: true,
+    postulantes: true,
+    academico: false,
+    recursos: false,
+    evaluacion: false,
+  });
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -99,12 +114,6 @@ export default function AdminPage() {
       loadAll();
     }
   }, [authenticated]);
-
-  useEffect(() => {
-    if (authenticated && active === "bitacora") {
-      loadBitacora().catch(() => setMessage("No se pudo cargar la bitacora."));
-    }
-  }, [authenticated, active]);
 
   // SESION INACTIVA - si no hay movimiento por 5 minutos, borra token y vuelve al login.
   useEffect(() => {
@@ -187,12 +196,6 @@ export default function AdminPage() {
     }
   }
 
-  // CARGA BITACORA - se ejecuta bajo demanda para no retrasar el ingreso al panel.
-  async function loadBitacora() {
-    const bit = await apiGet<PaginatedResponse<Bitacora> | Bitacora[]>("/admin/bitacora?per_page=20");
-    setBitacoras(Array.isArray(bit) ? bit : bit.data ?? []);
-  }
-
   // CREAR REGISTROS - helper comun para formularios POST.
   async function submit(path: string, payload: Record<string, unknown>) {
     const cleanPayload = sanitizePayload(payload);
@@ -248,7 +251,7 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       {sidebarOpen && <button aria-label="Cerrar menu" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`fixed inset-y-0 left-0 z-40 border-r border-blue-950 bg-blue-950 p-4 text-white transition-all duration-200 lg:translate-x-0 ${sidebarCollapsed ? "lg:w-20" : "lg:w-72"} w-72 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 overflow-y-auto border-r border-blue-950 bg-blue-950 p-4 text-white transition-all duration-200 lg:translate-x-0 ${sidebarCollapsed ? "lg:w-20" : "lg:w-72"} w-72 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-3">
           <div className="grid h-12 w-12 place-items-center rounded-lg bg-red-700 text-xl font-bold text-white">U</div>
           <div className={sidebarCollapsed ? "hidden" : ""}>
@@ -257,15 +260,57 @@ export default function AdminPage() {
           </div>
           <button className="ml-auto rounded-lg p-2 hover:bg-white hover:text-blue-950 lg:hidden" onClick={() => setSidebarOpen(false)}><X size={20} /></button>
         </div>
-        <nav className="mt-10 space-y-2">
-          {sections.map((section) => {
-            const Icon = section.icon;
-            const selected = active === section.id;
+        <nav className="mt-10 space-y-2 pb-20">
+          {menuGroups.map((group) => {
+            const isOpen = openMenuGroups[group.id] ?? false;
+            const firstSection = sectionById.get(group.items[0]);
+            const GroupIcon = firstSection?.icon ?? LayoutDashboard;
+            const groupActive = group.items.includes(active);
+
+            if (sidebarCollapsed) {
+              return group.items.map((itemId) => {
+                const section = sectionById.get(itemId);
+                if (!section) return null;
+                const Icon = section.icon;
+                const selected = active === section.id;
+
+                return (
+                  <button key={section.id} title={section.label} onClick={() => { setActive(section.id); setSidebarOpen(false); }} className={`flex h-12 w-full items-center justify-center rounded-lg font-semibold ${selected ? "bg-white text-blue-950" : "text-blue-50 hover:bg-white hover:text-blue-950"}`}>
+                    <Icon size={20} />
+                  </button>
+                );
+              });
+            }
+
             return (
-              <button key={section.id} title={section.label} onClick={() => { setActive(section.id); setSidebarOpen(false); }} className={`flex h-12 w-full items-center gap-3 rounded-lg px-4 text-left font-semibold ${selected ? "bg-white text-blue-950" : "text-blue-50 hover:bg-white hover:text-blue-950"} ${sidebarCollapsed ? "justify-center px-0" : ""}`}>
-                <Icon size={20} />
-                {!sidebarCollapsed && section.label}
-              </button>
+              <div key={group.id} className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => setOpenMenuGroups((current) => ({ ...current, [group.id]: !isOpen }))}
+                  className={`flex h-12 w-full items-center gap-3 rounded-lg px-4 text-left font-semibold ${groupActive ? "bg-white text-blue-950" : "text-blue-50 hover:bg-white hover:text-blue-950"}`}
+                >
+                  <GroupIcon size={20} />
+                  <span className="flex-1">{group.label}</span>
+                  {isOpen ? <ChevronLeft className="-rotate-90" size={16} /> : <ChevronRight size={16} />}
+                </button>
+                {isOpen && (
+                  <div className="space-y-1 pl-4">
+                    {group.items.map((itemId) => {
+                      const section = sectionById.get(itemId);
+                      if (!section) return null;
+                      const Icon = section.icon;
+                      const selected = active === section.id;
+
+                      return (
+                        <button key={section.id} title={section.label} onClick={() => { setActive(section.id); setSidebarOpen(false); }} className={`flex h-10 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-semibold ${selected ? "bg-white text-blue-950" : "text-blue-50 hover:bg-white hover:text-blue-950"}`}>
+                          <Icon size={17} />
+                          {section.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
           <button onClick={logout} className={`flex h-12 w-full items-center gap-3 rounded-lg px-4 text-left font-semibold text-red-100 hover:bg-white hover:text-blue-950 ${sidebarCollapsed ? "justify-center px-0" : ""}`}>
@@ -317,7 +362,7 @@ export default function AdminPage() {
             />
           )}
           {active === "examenes" && <ExamenesModule gestiones={gestiones} />}
-          {active === "bitacora" && <BitacoraModule rows={bitacoras} />}
+          {active === "bitacora" && <BitacoraModule />}
           {active === "reportes" && <ReportesModule gestiones={gestiones} />}
         </div>
       </section>

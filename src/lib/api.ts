@@ -264,7 +264,18 @@ export type InscripcionOpciones = {
   gestiones: Gestion[];
   carreras: Array<Pick<Carrera, "carrera_id" | "codigo" | "nombre">>;
   monto_inscripcion: number;
+  moneda_inscripcion: string;
   tiempo_pago_segundos: number;
+  concepto_pago: string;
+};
+
+export type InscripcionPreparada = {
+  token: string;
+  expira_en: string;
+  monto: number;
+  moneda: string;
+  client_secret: string;
+  payment_intent_id: string;
 };
 
 export type BoletaInscripcion = {
@@ -273,6 +284,7 @@ export type BoletaInscripcion = {
   pago: {
     pago_id: number;
     monto: string;
+    moneda: string;
     metodo: string;
     numero_comprobante: string;
     estado: string;
@@ -289,6 +301,15 @@ export type BoletaInscripcion = {
     aula?: string;
   }>;
   estado_grupo: "ASIGNADO" | "PENDIENTE_DE_GRUPO";
+};
+
+export type EstadoPagoInscripcion = {
+  estado: "PENDIENTE" | "PAGADA" | "CANCELADA" | "EXPIRADA";
+  expira_en: string;
+  monto: number;
+  moneda: string;
+  stripe_estado?: string | null;
+  boleta?: BoletaInscripcion;
 };
 
 export type DocenteDisponible = {

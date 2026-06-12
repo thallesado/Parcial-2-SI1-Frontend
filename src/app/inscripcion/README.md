@@ -13,12 +13,12 @@ Esta ruta permite que un postulante se registre desde afuera sin iniciar sesion 
 3. Informacion academica.
 4. Carreras postuladas.
 5. Confirmacion de datos.
-6. Pago simulado.
+6. Pago embebido con Stripe Payment Element.
 7. Confirmacion final con grupo asignado y boleta.
 
 ## Reglas importantes
 
-- La inscripcion no se consolida hasta confirmar el pago simulado.
+- La inscripcion no se consolida hasta que el backend confirma el pago de Stripe.
 - Si el pago no se confirma dentro del plazo definido, la operacion temporal se cancela.
 - Al finalizar, el backend intenta asignar grupo automaticamente.
 - Si no hay grupo disponible, aparece pendiente de grupo.

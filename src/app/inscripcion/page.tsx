@@ -1,9 +1,11 @@
 "use client";
 
-import { API_URL, apiGet, apiPost, BoletaInscripcion, InscripcionOpciones } from "@/lib/api";
-import { ArrowLeft, ArrowRight, CheckCircle2, CreditCard, Download, FileText, UserPlus } from "lucide-react";
+import { API_URL, apiGet, apiPost, BoletaInscripcion, EstadoPagoInscripcion, InscripcionOpciones, InscripcionPreparada } from "@/lib/api";
+import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
+import { ArrowLeft, ArrowRight, CheckCircle2, CreditCard, Download, FileText, LoaderCircle, ShieldCheck, UserPlus } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 const initialForm = {
   gestion_id: "",
@@ -32,6 +34,10 @@ const stepFields = [
   [],
 ];
 
+const stripePromise = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+  ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+  : null;
+
 export default function InscripcionPage() {
   const [options, setOptions] = useState<InscripcionOpciones | null>(null);
   const [form, setForm] = useState<Record<string, string>>(initialForm);
@@ -39,8 +45,10 @@ export default function InscripcionPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [token, setToken] = useState("");
-  const [secondsLeft, setSecondsLeft] = useState(300);
+  const [clientSecret, setClientSecret] = useState("");
+  const [secondsLeft, setSecondsLeft] = useState(600);
   const [loading, setLoading] = useState(false);
+  const [verifyingPayment, setVerifyingPayment] = useState(false);
   const [boleta, setBoleta] = useState<BoletaInscripcion | null>(null);
   const paymentPrepared = useRef(false);
 
@@ -59,31 +67,63 @@ export default function InscripcionPage() {
       .catch(() => setMessage("No se pudieron cargar las opciones de inscripcion."));
   }, []);
 
+  const carrera1 = useMemo(() => options?.carreras.find((item) => String(item.carrera_id) === form.carrera_opcion_1), [options, form.carrera_opcion_1]);
+  const carrera2 = useMemo(() => options?.carreras.find((item) => String(item.carrera_id) === form.carrera_opcion_2), [options, form.carrera_opcion_2]);
+
+  function update(name: string, value: string) {
+    if (paymentPrepared.current && !boleta) {
+      invalidatePreparedPayment();
+    }
+
+    setForm((current) => ({ ...current, [name]: value }));
+    setErrors((current) => current.filter((item) => item !== name));
+  }
+
+  function invalidatePreparedPayment() {
+    const oldToken = token;
+    if (oldToken) {
+      void apiPost(`/inscripciones/${oldToken}/cancelar`, {}).catch(() => null);
+    }
+
+    setToken("");
+    setClientSecret("");
+    setSecondsLeft(options?.tiempo_pago_segundos ?? 600);
+    paymentPrepared.current = false;
+    setVerifyingPayment(false);
+  }
+
+  async function expirePreparedPayment() {
+    if (token) {
+      await apiPost(`/inscripciones/${token}/cancelar`, {}).catch(() => null);
+    }
+
+    setMessage("El tiempo para confirmar el pago vencio. Vuelve a revisar tus datos e inicia nuevamente la pasarela.");
+    setToken("");
+    setClientSecret("");
+    paymentPrepared.current = false;
+    setVerifyingPayment(false);
+    setStep(4);
+  }
+
+  const handlePaymentExpired = useEffectEvent(async () => {
+    await expirePreparedPayment();
+  });
+
   useEffect(() => {
-    if (step !== 5 || !token || boleta) return;
+    if (step !== 5 || !token || boleta || verifyingPayment) return;
     const timer = window.setTimeout(() => {
       setSecondsLeft((value) => {
         if (value <= 1) {
-          setMessage("El tiempo para confirmar el pago vencio. Vuelve a revisar tus datos e inicia de nuevo la pasarela.");
-          setToken("");
-          paymentPrepared.current = false;
-          setStep(4);
+          void handlePaymentExpired();
           return 0;
         }
 
         return value - 1;
       });
     }, 1000);
+
     return () => window.clearTimeout(timer);
-  }, [step, token, secondsLeft, boleta]);
-
-  const carrera1 = useMemo(() => options?.carreras.find((item) => String(item.carrera_id) === form.carrera_opcion_1), [options, form.carrera_opcion_1]);
-  const carrera2 = useMemo(() => options?.carreras.find((item) => String(item.carrera_id) === form.carrera_opcion_2), [options, form.carrera_opcion_2]);
-
-  function update(name: string, value: string) {
-    setForm((current) => ({ ...current, [name]: value }));
-    setErrors((current) => current.filter((item) => item !== name));
-  }
+  }, [step, token, boleta, verifyingPayment, secondsLeft]);
 
   async function next() {
     setMessage("");
@@ -92,28 +132,35 @@ export default function InscripcionPage() {
       setErrors(missing);
       return;
     }
+
     if (step === 3 && form.carrera_opcion_1 === form.carrera_opcion_2) {
       setErrors(["carrera_opcion_2"]);
       setMessage("La segunda carrera debe ser diferente de la primera.");
       return;
     }
+
     if (step === 4) {
       await preparePayment();
       return;
     }
+
     setStep((value) => Math.min(value + 1, steps.length - 1));
   }
 
   async function preparePayment() {
-    if (paymentPrepared.current && token) {
+    if (paymentPrepared.current && token && clientSecret) {
       setStep(5);
       return;
     }
+
     setLoading(true);
+    setMessage("");
+
     try {
-      const response = await apiPost<{ token: string; expira_en: string; monto: number }>("/inscripciones/preparar", form);
+      const response = await apiPost<InscripcionPreparada>("/inscripciones/preparar", form);
       setToken(response.token);
-      setSecondsLeft(options?.tiempo_pago_segundos ?? 300);
+      setClientSecret(response.client_secret);
+      setSecondsLeft(options?.tiempo_pago_segundos ?? 600);
       paymentPrepared.current = true;
       setStep(5);
     } catch (error) {
@@ -123,19 +170,37 @@ export default function InscripcionPage() {
     }
   }
 
-  async function confirmPayment() {
-    if (!token) return;
-    setLoading(true);
+  async function syncPaymentStatus(currentToken: string) {
+    setVerifyingPayment(true);
+    setMessage("Estamos validando el pago con Stripe y consolidando tu inscripcion.");
+
     try {
-      const response = await apiPost<BoletaInscripcion>(`/inscripciones/${token}/confirmar-pago`, {
-        metodo: "SIMULADO",
-        monto: options?.monto_inscripcion ?? 200,
-      });
-      setBoleta(response);
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        const response = await apiGet<EstadoPagoInscripcion>(`/inscripciones/${currentToken}/estado`);
+
+        if (response.estado === "PAGADA" && response.boleta) {
+          setBoleta(response.boleta);
+          setMessage("");
+          return;
+        }
+
+        if (response.estado === "EXPIRADA" || response.estado === "CANCELADA") {
+          setMessage("La sesion de pago ya no esta disponible. Revisa tus datos e intenta nuevamente.");
+          setToken("");
+          setClientSecret("");
+          paymentPrepared.current = false;
+          setStep(4);
+          return;
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      }
+
+      setMessage("El pago fue enviado correctamente. Si la boleta no aparece aun, espera unos segundos y vuelve a cargar esta pantalla.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo confirmar el pago.");
+      setMessage(error instanceof Error ? error.message : "No se pudo validar el pago en este momento.");
     } finally {
-      setLoading(false);
+      setVerifyingPayment(false);
     }
   }
 
@@ -205,25 +270,38 @@ export default function InscripcionPage() {
               form={form}
               carrera1={carrera1?.nombre}
               carrera2={carrera2?.nombre}
-              monto={options?.monto_inscripcion ?? 200}
+              monto={options?.monto_inscripcion ?? 100}
+              moneda={options?.moneda_inscripcion ?? "USD"}
+              concepto={options?.concepto_pago ?? "Pago Postulacion Universitaria"}
             />
           )}
 
           {step === 5 && (
-            <PaymentPanel secondsLeft={secondsLeft} monto={options?.monto_inscripcion ?? 200} loading={loading} onConfirm={confirmPayment} />
+            <PaymentStep
+              clientSecret={clientSecret}
+              secondsLeft={secondsLeft}
+              monto={options?.monto_inscripcion ?? 100}
+              moneda={options?.moneda_inscripcion ?? "USD"}
+              concepto={options?.concepto_pago ?? "Pago Postulacion Universitaria"}
+              busy={loading || verifyingPayment}
+              onConfirmed={() => syncPaymentStatus(token)}
+            />
           )}
 
           <div className="mt-6 flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-between">
-            <button type="button" disabled={step === 0 || loading} onClick={() => setStep((value) => Math.max(0, value - 1))} className="rounded-lg border border-slate-300 px-5 py-3 font-bold text-slate-700 disabled:opacity-50">Anterior</button>
+            <button
+              type="button"
+              disabled={step === 0 || loading || verifyingPayment}
+              onClick={() => setStep((value) => Math.max(0, value - 1))}
+              className="rounded-lg border border-slate-300 px-5 py-3 font-bold text-slate-700 disabled:opacity-50"
+            >
+              Anterior
+            </button>
             {step < 5 ? (
-              <button type="button" disabled={loading} onClick={next} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-6 py-3 font-bold text-white disabled:opacity-60">
+              <button type="button" disabled={loading || verifyingPayment} onClick={next} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-6 py-3 font-bold text-white disabled:opacity-60">
                 {loading ? "Preparando..." : "Siguiente"} <ArrowRight size={18} />
               </button>
-            ) : (
-              <button type="button" disabled={loading || !token} onClick={confirmPayment} className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-700 px-6 py-3 font-bold text-white disabled:opacity-60">
-                {loading ? "Confirmando..." : "Confirmar pago"} <CreditCard size={18} />
-              </button>
-            )}
+            ) : null}
           </div>
         </form>
       </div>
@@ -281,7 +359,7 @@ function SelectField({ name, label, value, onChange, children, error = false }: 
   );
 }
 
-function Preview({ form, carrera1, carrera2, monto }: { form: Record<string, string>; carrera1?: string; carrera2?: string; monto: number }) {
+function Preview({ form, carrera1, carrera2, monto, moneda, concepto }: { form: Record<string, string>; carrera1?: string; carrera2?: string; monto: number; moneda: string; concepto: string }) {
   const items = [
     ["Gestion", form.gestion_id],
     ["CI", form.ci],
@@ -297,12 +375,14 @@ function Preview({ form, carrera1, carrera2, monto }: { form: Record<string, str
     ["Titulo bachiller", form.titulo_bachiller_codigo],
     ["Carrera opcion 1", carrera1],
     ["Carrera opcion 2", carrera2],
-    ["Monto de inscripcion", `Bs. ${monto}`],
+    ["Concepto de pago", concepto],
+    ["Monto de inscripcion", `${moneda} ${monto.toFixed(2)}`],
   ];
+
   return (
     <section className="rounded-lg border border-blue-100 bg-blue-50 p-5">
       <h1 className="flex items-center gap-2 text-xl font-extrabold text-blue-950"><FileText /> Confirmacion de datos</h1>
-      <p className="mt-2 font-semibold text-slate-600">Verifica tus datos antes de pasar a la pasarela de pago simulada.</p>
+      <p className="mt-2 font-semibold text-slate-600">Verifica tus datos antes de pasar a la pasarela de pago segura con Stripe.</p>
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {items.map(([label, value]) => (
           <div key={label} className="rounded-lg bg-white p-4 shadow-sm">
@@ -315,29 +395,151 @@ function Preview({ form, carrera1, carrera2, monto }: { form: Record<string, str
   );
 }
 
-function PaymentPanel({ secondsLeft, monto, loading, onConfirm }: { secondsLeft: number; monto: number; loading: boolean; onConfirm: () => void }) {
+function PaymentStep({ clientSecret, secondsLeft, monto, moneda, concepto, busy, onConfirmed }: {
+  clientSecret: string;
+  secondsLeft: number;
+  monto: number;
+  moneda: string;
+  concepto: string;
+  busy: boolean;
+  onConfirmed: () => Promise<void>;
+}) {
+  const appearance = {
+    theme: "stripe" as const,
+    variables: {
+      colorPrimary: "#1d4ed8",
+      colorBackground: "#ffffff",
+      colorText: "#0f172a",
+      borderRadius: "10px",
+    },
+  };
+
+  if (!stripePromise) {
+    return (
+      <section className="rounded-lg border border-red-200 bg-red-50 p-5 font-semibold text-red-700">
+        Falta configurar `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` en el frontend para mostrar la pasarela.
+      </section>
+    );
+  }
+
+  if (!clientSecret) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-6">
+        <div className="flex items-center gap-3 font-semibold text-slate-600">
+          <LoaderCircle className="animate-spin" /> Preparando el pago seguro con Stripe...
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <Elements stripe={stripePromise} options={{ clientSecret, appearance }}>
+      <PaymentPanel
+        secondsLeft={secondsLeft}
+        monto={monto}
+        moneda={moneda}
+        concepto={concepto}
+        busy={busy}
+        onConfirmed={onConfirmed}
+      />
+    </Elements>
+  );
+}
+
+function PaymentPanel({ secondsLeft, monto, moneda, concepto, busy, onConfirmed }: {
+  secondsLeft: number;
+  monto: number;
+  moneda: string;
+  concepto: string;
+  busy: boolean;
+  onConfirmed: () => Promise<void>;
+}) {
   const minutes = Math.floor(secondsLeft / 60);
   const seconds = String(secondsLeft % 60).padStart(2, "0");
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-6">
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-extrabold text-blue-950"><CreditCard /> Pasarela de pago simulada</h1>
-          <p className="mt-2 text-slate-600">Por ahora este pago es estatico. Mas adelante puedes conectar Stripe usando este mismo paso.</p>
-          <div className="mt-6 rounded-lg bg-slate-50 p-5">
-            <p className="text-sm font-bold text-slate-500">Monto a pagar</p>
-            <p className="mt-2 text-4xl font-extrabold text-blue-700">Bs. {monto}</p>
-            <p className="mt-4 font-semibold text-slate-600">Metodo: pago simulado</p>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
+          <h1 className="flex items-center gap-2 text-2xl font-extrabold text-blue-950"><CreditCard /> Verificar pago</h1>
+          <p className="mt-2 text-slate-600">Este pago de prueba usa Stripe en modo test y mantiene la inscripcion en espera hasta que el backend confirme el cobro.</p>
+
+          <div className="mt-5 rounded-lg bg-white p-4 shadow-sm">
+            <div className="mb-4 flex items-center gap-2 text-sm font-bold text-emerald-700">
+              <ShieldCheck size={18} /> Pago protegido por Stripe
+            </div>
+            <PaymentElement />
           </div>
         </div>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-900">
-          <p className="font-bold">Tiempo restante</p>
-          <p className="mt-3 text-5xl font-extrabold">{minutes}:{seconds}</p>
-          <p className="mt-3 text-sm font-semibold">Si el tiempo llega a cero, la operacion se cancela y tendras que confirmar nuevamente tus datos.</p>
-          <button type="button" disabled={loading} onClick={onConfirm} className="mt-6 w-full rounded-lg bg-red-700 px-5 py-3 font-bold text-white disabled:opacity-60">Confirmar pago</button>
+
+        <div className="space-y-4">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-5">
+            <p className="text-sm font-bold uppercase text-blue-700">Concepto</p>
+            <p className="mt-2 text-lg font-extrabold text-blue-950">{concepto}</p>
+            <p className="mt-4 text-sm font-bold uppercase text-blue-700">Monto</p>
+            <p className="mt-2 text-4xl font-extrabold text-blue-700">{moneda} {monto.toFixed(2)}</p>
+            <p className="mt-3 text-sm font-semibold text-slate-600">Metodo habilitado: tarjeta bancaria.</p>
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-900">
+            <p className="font-bold">Tiempo restante</p>
+            <p className="mt-3 text-5xl font-extrabold">{minutes}:{seconds}</p>
+            <p className="mt-3 text-sm font-semibold">Si el tiempo llega a cero, la solicitud temporal se cancela y deberas iniciar nuevamente el pago.</p>
+          </div>
+
+          <StripePayButton busy={busy} onConfirmed={onConfirmed} />
         </div>
       </div>
     </section>
+  );
+}
+
+function StripePayButton({ busy, onConfirmed }: { busy: boolean; onConfirmed: () => Promise<void> }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit() {
+    if (!stripe || !elements) return;
+
+    setSubmitting(true);
+    setError("");
+
+    const submitted = await elements.submit();
+    if (submitted.error) {
+      setError(submitted.error.message ?? "No se pudo validar el formulario de pago.");
+      setSubmitting(false);
+      return;
+    }
+
+    const result = await stripe.confirmPayment({
+      elements,
+      redirect: "if_required",
+    });
+
+    if (result.error) {
+      setError(result.error.message ?? "Stripe no pudo confirmar el pago.");
+      setSubmitting(false);
+      return;
+    }
+
+    await onConfirmed();
+    setSubmitting(false);
+  }
+
+  return (
+    <div>
+      {error ? <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div> : null}
+      <button
+        type="button"
+        disabled={!stripe || !elements || busy || submitting}
+        onClick={handleSubmit}
+        className="w-full rounded-lg bg-red-700 px-5 py-3 font-bold text-white disabled:opacity-60"
+      >
+        {busy || submitting ? "Procesando..." : "Pagar y confirmar inscripcion"}
+      </button>
+    </div>
   );
 }
 
@@ -355,8 +557,9 @@ function BoletaScreen({ boleta, token }: { boleta: BoletaInscripcion; token: str
           </a>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Info label="ID Postulante" value={String(boleta.postulante.postulante_id)} />
+          <Info label="CI" value={boleta.postulante.ci} />
           <Info label="Nombre" value={`${boleta.postulante.nombres} ${boleta.postulante.apellidos}`} />
           <Info label="Gestion" value={boleta.postulante.gestion_id ?? ""} />
           <Info label="Grupo" value={boleta.postulante.grupo_asignado || "Pendiente de grupo"} tone={boleta.estado_grupo === "ASIGNADO" ? "green" : "amber"} />
@@ -369,7 +572,7 @@ function BoletaScreen({ boleta, token }: { boleta: BoletaInscripcion; token: str
           <Panel title="Pago">
             <Info label="Estado" value={boleta.pago.estado} tone="green" />
             <Info label="Metodo" value={boleta.pago.metodo} />
-            <Info label="Monto" value={`Bs. ${boleta.pago.monto}`} />
+            <Info label="Monto" value={`${boleta.pago.moneda} ${boleta.pago.monto}`} />
             <Info label="Comprobante" value={boleta.pago.numero_comprobante} />
           </Panel>
         </div>

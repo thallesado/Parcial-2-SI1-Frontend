@@ -38,6 +38,20 @@ export async function apiPost<T>(path: string, body: Record<string, unknown>): P
   return response.json();
 }
 
+// API FORMULARIO - envia archivos reales sin convertirlos a JSON.
+export async function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json", ...authHeaders() },
+    body,
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(formatApiError(detail, `Error al guardar ${path}`));
+  }
+  return response.json();
+}
+
 // API PUT - se usa para modificar registros existentes: carreras, materias, docentes, grupos, portal.
 export async function apiPut<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
@@ -63,6 +77,28 @@ export async function apiDelete<T>(path: string): Promise<T> {
     throw new Error(formatApiError(detail, `Error al eliminar ${path}`));
   }
   return response.json();
+}
+
+// API ARCHIVOS - descarga reportes o documentos protegidos con el token de sesion.
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const response = await fetch(`${API_URL}${path}`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(formatApiError(detail, `No se pudo descargar ${filename}`));
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 type ApiErrorDetail = {
@@ -148,6 +184,51 @@ export type Docente = {
   estado: string;
   materia_ids?: number[];
   materias?: string;
+  requisitos?: DocenteRequisito[];
+  documentacion_estado?: "INCOMPLETA" | "PENDIENTE" | "VALIDADA" | "RECHAZADA";
+};
+
+export type DocenteRequisito = {
+  tipo_requisito_id: number;
+  codigo: "PROF_AREA" | "MAESTRIA" | "DIP_EDU_SUP";
+  nombre: string;
+  descripcion: string;
+  institucion: string;
+  fecha_obtencion: string;
+  codigo_documento: string;
+  archivo_nombre_original?: string | null;
+  archivo_mime?: string | null;
+  archivo_tamano?: number | null;
+  estado_validacion: "PENDIENTE" | "VALIDADO" | "OBSERVADO" | "RECHAZADO";
+  validado_en?: string | null;
+};
+
+export type AuthSession = {
+  usuario_id: number;
+  usuario: string;
+  nombre_completo: string;
+  roles: string[];
+  rol: "ADMINISTRADOR" | "SECRETARIA" | "DOCENTE" | string;
+  docente_id?: number | null;
+  secciones: string[];
+};
+
+export type UsuarioSistema = {
+  usuario_id: number;
+  nombre_usuario: string;
+  nombres: string;
+  apellidos: string;
+  correo: string;
+  estado: string;
+  docente_id?: number | null;
+  docente?: string;
+  roles: string;
+};
+
+export type UsuariosResponse = {
+  usuarios: UsuarioSistema[];
+  roles: Array<{ rol_id: number; nombre: string; descripcion: string; prioridad: number }>;
+  docentes: Array<{ docente_id: number; nombre: string }>;
 };
 
 export type Postulante = {

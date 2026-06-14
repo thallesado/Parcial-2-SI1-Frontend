@@ -12,6 +12,7 @@ import {
   FileText,
   History,
   GraduationCap,
+  CalendarClock,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -22,14 +23,18 @@ import {
   Search,
   Trash2,
   Users,
+  UserCog,
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   apiDelete,
+  apiDownload,
   apiGet,
   apiPost,
+  apiPostForm,
   apiPut,
+  AuthSession,
   Aula,
   Carrera,
   CupoCarrera,
@@ -51,11 +56,14 @@ import { BitacoraModule } from "./_modules/BitacoraModule";
 import { DashboardView, type Dashboard } from "./_modules/DashboardModule";
 import { ExamenesModule } from "./_modules/ExamenesModule";
 import { ReportesModule } from "./_modules/ReportesModule";
+import { MisHorariosModule } from "./_modules/MisHorariosModule";
+import { UsuariosModule } from "./_modules/UsuariosModule";
 
 // MENU ADMIN - cada id se usa para decidir que modulo renderizar en el panel.
 // Para crear un nuevo modulo, agrega aqui una opcion y luego su render en AdminPage.
 const sections = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "usuarios", label: "Usuarios y roles", icon: UserCog },
   { id: "postulantes", label: "Postulantes", icon: Users },
   { id: "examenes", label: "Examenes", icon: ClipboardList },
   { id: "bitacora", label: "Bitacora", icon: History },
@@ -66,14 +74,15 @@ const sections = [
   { id: "reportes", label: "Reportes", icon: FileText },
   { id: "gestiones", label: "Gestiones", icon: CalendarDays },
   { id: "cupos", label: "Cupos", icon: BriefcaseBusiness },
+  { id: "mis-horarios", label: "Mis horarios", icon: CalendarClock },
 ];
 
 const menuGroups = [
-  { id: "principal", label: "Principal", items: ["dashboard"] },
+  { id: "principal", label: "Principal", items: ["dashboard", "usuarios"] },
   { id: "postulantes", label: "Postulantes", items: ["postulantes"] },
   { id: "academico", label: "Academico", items: ["carreras", "materias", "gestiones", "cupos"] },
   { id: "recursos", label: "Recursos", items: ["docentes", "aulas"] },
-  { id: "evaluacion", label: "Evaluacion y control", items: ["examenes", "reportes", "bitacora"] },
+  { id: "evaluacion", label: "Evaluacion y control", items: ["examenes", "mis-horarios", "reportes", "bitacora"] },
 ];
 
 const sectionById = new Map(sections.map((section) => [section.id, section]));
@@ -84,6 +93,14 @@ const emptyDashboard: Dashboard = { carreras: 0, materias: 0, docentes: 0, aulas
 // Centraliza autenticacion, carga inicial de catalogos, menu lateral y mensajes globales.
 export default function AdminPage() {
   const [authenticated, setAuthenticated] = useState(() => typeof window !== "undefined" && Boolean(window.localStorage.getItem("admin_token")));
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return JSON.parse(window.localStorage.getItem("auth_user") ?? "null");
+    } catch {
+      return null;
+    }
+  });
   const [active, setActive] = useState("dashboard");
   const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
   const [gestiones, setGestiones] = useState<Gestion[]>([]);
@@ -107,13 +124,33 @@ export default function AdminPage() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [timeoutNotice, setTimeoutNotice] = useState(false);
 
+  const allowedSections = authSession?.secciones ?? [];
   const activeTitle = useMemo(() => sections.find((item) => item.id === active)?.label ?? "Dashboard", [active]);
 
   useEffect(() => {
-    if (authenticated) {
-      loadAll();
+    if (!authenticated) return;
+
+    if (!authSession) {
+      apiGet<AuthSession>("/auth/me")
+        .then((session) => {
+          window.localStorage.setItem("auth_user", JSON.stringify(session));
+          setActive(session.secciones[0] ?? "dashboard");
+          setAuthSession(session);
+        })
+        .catch(() => clearSession("Sesion expirada o backend no disponible."));
+      return;
     }
-  }, [authenticated]);
+
+    const timer = window.setTimeout(() => {
+      const firstAllowed = authSession.secciones[0];
+      if (!authSession.secciones.includes(active) && firstAllowed) {
+        setActive(firstAllowed);
+      }
+      loadAll();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, authSession?.rol]);
 
   // SESION INACTIVA - si no hay movimiento por 5 minutos, borra token y vuelve al login.
   useEffect(() => {
@@ -124,6 +161,8 @@ export default function AdminPage() {
       clearTimeout(timer);
       timer = setTimeout(() => {
         window.localStorage.removeItem("admin_token");
+        window.localStorage.removeItem("auth_user");
+        setAuthSession(null);
         setAuthenticated(false);
         setTimeoutNotice(true);
         setMessage("");
@@ -144,11 +183,13 @@ export default function AdminPage() {
   async function login(payload: Record<string, unknown>) {
     setLoginLoading(true);
     try {
-      const result = await apiPost<{ token: string; usuario: string }>("/auth/login", payload);
+      const result = await apiPost<AuthSession & { token: string }>("/auth/login", payload);
       window.localStorage.setItem("admin_token", result.token);
+      window.localStorage.setItem("auth_user", JSON.stringify(result));
+      setActive(result.secciones[0] ?? "dashboard");
+      setAuthSession(result);
       setAuthenticated(true);
       setMessage("");
-      await loadAll();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo iniciar sesion.");
     } finally {
@@ -160,6 +201,8 @@ export default function AdminPage() {
   async function logout() {
     await apiPost("/auth/logout", {}).catch(() => null);
     window.localStorage.removeItem("admin_token");
+    window.localStorage.removeItem("auth_user");
+    setAuthSession(null);
     setAuthenticated(false);
     setMessage("");
   }
@@ -167,33 +210,35 @@ export default function AdminPage() {
   // CARGA GLOBAL - trae todos los catalogos usados por los modulos del panel.
   // Si un modulo necesita datos nuevos, agrega aqui su apiGet y su setState.
   async function loadAll() {
+    if (!authSession) return;
     setLoading(true);
     try {
-      const [dash, ges, car, mat, au, gru, doc, cup] = await Promise.all([
-        apiGet<Dashboard>("/admin/dashboard"),
-        apiGet<Gestion[]>("/admin/gestiones"),
-        apiGet<Carrera[]>("/admin/carreras"),
-        apiGet<Materia[]>("/admin/materias"),
-        apiGet<Aula[]>("/admin/aulas"),
-        apiGet<GrupoResumen>("/admin/grupos/resumen"),
-        apiGet<Docente[]>("/admin/docentes"),
-        apiGet<CupoCarrera[]>("/admin/cupos"),
-      ]);
-      setDashboard(dash);
-      setGestiones(ges);
-      setCarreras(car);
-      setMaterias(mat);
-      setAulas(au);
-      setGruposResumen(gru);
-      setDocentes(doc);
-      setCupos(cup);
+      const can = (section: string) => authSession.secciones.includes(section);
+      const tasks: Promise<void>[] = [];
+      tasks.push(apiGet<Gestion[]>("/admin/gestiones").then(setGestiones));
+      if (can("dashboard")) tasks.push(apiGet<Dashboard>("/admin/dashboard").then(setDashboard));
+      if (can("postulantes") || can("aulas")) tasks.push(apiGet<Carrera[]>("/admin/carreras").then(setCarreras));
+      if (can("aulas")) {
+        tasks.push(apiGet<Aula[]>("/admin/aulas").then(setAulas));
+        tasks.push(apiGet<GrupoResumen>("/admin/grupos/resumen").then(setGruposResumen));
+      }
+      if (can("materias")) tasks.push(apiGet<Materia[]>("/admin/materias").then(setMaterias));
+      if (can("docentes")) tasks.push(apiGet<Docente[]>("/admin/docentes").then(setDocentes));
+      if (can("cupos")) tasks.push(apiGet<CupoCarrera[]>("/admin/cupos").then(setCupos));
+      await Promise.all(tasks);
     } catch {
-      window.localStorage.removeItem("admin_token");
-      setAuthenticated(false);
-      setMessage("Sesion expirada o backend no disponible.");
+      clearSession("Sesion expirada o backend no disponible.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function clearSession(reason = "") {
+    window.localStorage.removeItem("admin_token");
+    window.localStorage.removeItem("auth_user");
+    setAuthSession(null);
+    setAuthenticated(false);
+    setMessage(reason);
   }
 
   // CREAR REGISTROS - helper comun para formularios POST.
@@ -262,13 +307,15 @@ export default function AdminPage() {
         </div>
         <nav className="mt-10 space-y-2 pb-20">
           {menuGroups.map((group) => {
+            const permittedItems = group.items.filter((item) => allowedSections.includes(item));
+            if (permittedItems.length === 0) return null;
             const isOpen = openMenuGroups[group.id] ?? false;
-            const firstSection = sectionById.get(group.items[0]);
+            const firstSection = sectionById.get(permittedItems[0]);
             const GroupIcon = firstSection?.icon ?? LayoutDashboard;
-            const groupActive = group.items.includes(active);
+            const groupActive = permittedItems.includes(active);
 
             if (sidebarCollapsed) {
-              return group.items.map((itemId) => {
+              return permittedItems.map((itemId) => {
                 const section = sectionById.get(itemId);
                 if (!section) return null;
                 const Icon = section.icon;
@@ -295,7 +342,7 @@ export default function AdminPage() {
                 </button>
                 {isOpen && (
                   <div className="space-y-1 pl-4">
-                    {group.items.map((itemId) => {
+                    {permittedItems.map((itemId) => {
                       const section = sectionById.get(itemId);
                       if (!section) return null;
                       const Icon = section.icon;
@@ -329,8 +376,9 @@ export default function AdminPage() {
             <div className="flex items-center gap-4">
               <button className="rounded-lg bg-blue-950 p-3 text-white lg:hidden" onClick={() => setSidebarOpen(true)} aria-label="Abrir menu"><Menu size={22} /></button>
               <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-blue-700">Panel administrativo</p>
+              <p className="text-sm font-bold uppercase tracking-wide text-blue-700">{authSession?.rol === "DOCENTE" ? "Portal docente" : "Panel administrativo"}</p>
               <h1 className="text-3xl font-extrabold">{activeTitle}</h1>
+              <p className="mt-1 text-sm font-semibold text-slate-500">{authSession?.nombre_completo} | {authSession?.rol}</p>
               </div>
             </div>
             <div className="hidden gap-3 sm:flex">
@@ -344,15 +392,17 @@ export default function AdminPage() {
           {message && <div className="mb-6 whitespace-pre-line rounded-lg border border-blue-200 bg-blue-50 p-4 font-semibold text-blue-900">{message}</div>}
           {loading && <div className="mb-6 rounded-lg bg-white p-8 text-lg font-semibold">Cargando datos...</div>}
 
-          {active === "dashboard" && <DashboardView dashboard={dashboard} />}
+          {active === "dashboard" && allowedSections.includes("dashboard") && <DashboardView dashboard={dashboard} />}
+          {active === "usuarios" && allowedSections.includes("usuarios") && <UsuariosModule />}
           {active === "carreras" && <CrudCarrera rows={carreras} onSubmit={(payload) => submit("/admin/carreras", payload)} onUpdate={(id, payload) => update(`/admin/carreras/${id}`, payload)} onDelete={(id) => remove(`/admin/carreras/${id}`)} />}
           {active === "materias" && <CrudMateria rows={materias} onSubmit={(payload) => submit("/admin/materias", payload)} onUpdate={(id, payload) => update(`/admin/materias/${id}`, payload)} onDelete={(id) => remove(`/admin/materias/${id}`)} />}
-          {active === "aulas" && <GruposYAulasModule rows={aulas} resumen={gruposResumen} gestiones={gestiones} onSubmitAula={(payload) => submit("/admin/aulas", payload)} onDeleteAula={(id) => remove(`/admin/aulas/${id}`)} onSubmitGrupo={(payload) => submit("/admin/grupos", payload)} onUpdateGrupo={(id, payload) => update(`/admin/grupos/${id}`, payload)} onDeleteGrupo={(id) => remove(`/admin/grupos/${id}`)} onAsignar={(gestionId) => submit("/admin/grupos/asignar", { gestion_id: gestionId })} />}
-          {active === "docentes" && <CrudDocente rows={docentes} materias={materias} onSubmit={(payload) => submit("/admin/docentes", payload)} onUpdate={(id, payload) => update(`/admin/docentes/${id}`, payload)} onDelete={(id) => remove(`/admin/docentes/${id}`)} />}
+          {active === "aulas" && <GruposYAulasModule readOnly={authSession?.rol === "SECRETARIA"} rows={aulas} resumen={gruposResumen} gestiones={gestiones} onSubmitAula={(payload) => submit("/admin/aulas", payload)} onDeleteAula={(id) => remove(`/admin/aulas/${id}`)} onSubmitGrupo={(payload) => submit("/admin/grupos", payload)} onUpdateGrupo={(id, payload) => update(`/admin/grupos/${id}`, payload)} onDeleteGrupo={(id) => remove(`/admin/grupos/${id}`)} onAsignar={(gestionId) => submit("/admin/grupos/asignar", { gestion_id: gestionId })} />}
+          {active === "docentes" && <CrudDocente rows={docentes} materias={materias} onSaved={loadAll} onDelete={(id) => remove(`/admin/docentes/${id}`)} />}
           {active === "gestiones" && <CrudGestion rows={gestiones} onSubmit={(payload) => submit("/admin/gestiones", payload)} />}
           {active === "cupos" && <CrudCupo rows={cupos} carreras={carreras} gestiones={gestiones} onSubmit={(payload) => submit("/admin/cupos", payload)} />}
           {active === "postulantes" && (
             <CrudPostulante
+              readOnly={authSession?.rol === "SECRETARIA"}
               carreras={carreras}
               gestiones={gestiones}
               grupos={gruposResumen?.grupos ?? []}
@@ -362,6 +412,7 @@ export default function AdminPage() {
             />
           )}
           {active === "examenes" && <ExamenesModule gestiones={gestiones} />}
+          {active === "mis-horarios" && <MisHorariosModule />}
           {active === "bitacora" && <BitacoraModule />}
           {active === "reportes" && <ReportesModule gestiones={gestiones} />}
         </div>
@@ -547,7 +598,7 @@ function FormShell({ title, children, onSubmit }: { title: string; children: Rea
 function StepHeader({ steps, current }: { steps: string[]; current: number }) {
   return (
     <div className="mb-6">
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {steps.map((label, index) => (
           <div key={label} className="flex items-center gap-3">
             <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-extrabold ${index <= current ? "bg-blue-700 text-white" : "bg-slate-200 text-slate-600"}`}>{index + 1}</span>
@@ -646,7 +697,7 @@ function CrudMateria({ rows, onSubmit, onUpdate, onDelete }: { rows: Materia[]; 
 }
 
 // MODULO GRUPOS Y AULAS - crea grupos, administra aulas y muestra estudiantes por grupo.
-function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAula, onSubmitGrupo, onUpdateGrupo, onDeleteGrupo, onAsignar }: { rows: Aula[]; resumen: GrupoResumen | null; gestiones: Gestion[]; onSubmitAula: (data: Record<string, unknown>) => void; onDeleteAula: (id: number) => void; onSubmitGrupo: (data: Record<string, unknown>) => void; onUpdateGrupo: (id: number, data: Record<string, unknown>) => void; onDeleteGrupo: (id: number) => void; onAsignar: (gestionId: string) => void }) {
+function GruposYAulasModule({ readOnly = false, rows, resumen, gestiones, onSubmitAula, onDeleteAula, onSubmitGrupo, onUpdateGrupo, onDeleteGrupo, onAsignar }: { readOnly?: boolean; rows: Aula[]; resumen: GrupoResumen | null; gestiones: Gestion[]; onSubmitAula: (data: Record<string, unknown>) => void; onDeleteAula: (id: number) => void; onSubmitGrupo: (data: Record<string, unknown>) => void; onUpdateGrupo: (id: number, data: Record<string, unknown>) => void; onDeleteGrupo: (id: number) => void; onAsignar: (gestionId: string) => void }) {
   const [showAulaForm, setShowAulaForm] = useState(false);
   const [showGrupoForm, setShowGrupoForm] = useState(false);
   const [studentsGroup, setStudentsGroup] = useState<{ title: string; rows: Array<Record<string, unknown>> } | null>(null);
@@ -689,9 +740,9 @@ function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAu
             {gestiones.map((g) => <option key={g.gestion_id} value={g.gestion_id}>{g.gestion_id} - {g.nombre}</option>)}
           </select>
         </label>
-        <button onClick={() => setShowGrupoForm((value) => !value)} className="rounded-lg bg-blue-700 px-5 py-3 font-bold text-white">Crear grupo</button>
-        <button onClick={() => { setFetchedResumen(null); if (gestionActual) onAsignar(gestionActual); }} className="rounded-lg bg-red-700 px-5 py-3 font-bold text-white">Asignar pendientes</button>
-        <button onClick={() => setShowAulaForm((value) => !value)} className="rounded-lg bg-blue-950 px-5 py-3 font-bold text-white">Agregar aula</button>
+        {!readOnly && <button onClick={() => setShowGrupoForm((value) => !value)} className="rounded-lg bg-blue-700 px-5 py-3 font-bold text-white">Crear grupo</button>}
+        {!readOnly && <button onClick={() => { setFetchedResumen(null); if (gestionActual) onAsignar(gestionActual); }} className="rounded-lg bg-red-700 px-5 py-3 font-bold text-white">Asignar pendientes</button>}
+        {!readOnly && <button onClick={() => setShowAulaForm((value) => !value)} className="rounded-lg bg-blue-950 px-5 py-3 font-bold text-white">Agregar aula</button>}
         {loadingResumen && <span className="font-semibold text-slate-500">Cargando gestion...</span>}
       </div>
 
@@ -709,8 +760,8 @@ function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAu
         <Table columns={["grupo_id", "gestion_id", "codigo", "turno", "capacidad_maxima", "total_estudiantes", "estado"]} rows={(localResumen?.grupos ?? []) as unknown as Array<Record<string, unknown>>} actions={(row) => (
           <div className="flex gap-2">
             <button title="Ver estudiantes" onClick={() => showStudents(row)} className="rounded-lg bg-blue-700 p-2 text-white"><Eye size={18} /></button>
-            <button title="Editar grupo" onClick={() => setEditingGroup(row)} className="rounded-lg bg-slate-700 p-2 text-white"><Pencil size={18} /></button>
-            <button title="Eliminar grupo" onClick={() => setDeletingGroup(row)} className="rounded-lg bg-red-700 p-2 text-white"><Trash2 size={18} /></button>
+            {!readOnly && <button title="Editar grupo" onClick={() => setEditingGroup(row)} className="rounded-lg bg-slate-700 p-2 text-white"><Pencil size={18} /></button>}
+            {!readOnly && <button title="Eliminar grupo" onClick={() => setDeletingGroup(row)} className="rounded-lg bg-red-700 p-2 text-white"><Trash2 size={18} /></button>}
           </div>
         )} />
       </div>
@@ -730,7 +781,7 @@ function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAu
         <Table
           columns={["aula_id", "codigo", "nombre", "capacidad", "ubicacion", "estado"]}
           rows={rows as unknown as Array<Record<string, unknown>>}
-          actions={(row) => (
+          actions={readOnly ? undefined : (row) => (
             <button onClick={() => onDeleteAula(Number(row.aula_id))} className="rounded-lg bg-red-700 p-2 text-white"><Trash2 size={18} /></button>
           )}
         />
@@ -762,10 +813,31 @@ function GruposYAulasModule({ rows, resumen, gestiones, onSubmitAula, onDeleteAu
 }
 
 // MODULO DOCENTES - contiene registro/edicion de docentes y submodulo de asignacion.
-function CrudDocente({ rows, materias, onSubmit, onUpdate, onDelete }: { rows: Docente[]; materias: Materia[]; onSubmit: (data: Record<string, unknown>) => void; onUpdate: (id: number, data: Record<string, unknown>) => void; onDelete: (id: number) => void }) {
+function CrudDocente({ rows, materias, onSaved, onDelete }: { rows: Docente[]; materias: Materia[]; onSaved: () => Promise<void>; onDelete: (id: number) => void }) {
   const [editing, setEditing] = useState<Docente | null>(null);
   const [deleting, setDeleting] = useState<Docente | null>(null);
+  const [viewingDocuments, setViewingDocuments] = useState<Docente | null>(null);
   const [tab, setTab] = useState<"registro" | "asignacion">("registro");
+  const [message, setMessage] = useState("");
+
+  async function saveDocente(data: FormData, docenteId?: number) {
+    try {
+      await apiPostForm(docenteId ? `/admin/docentes/${docenteId}/actualizar` : "/admin/docentes", data);
+      setMessage(docenteId ? "Docente actualizado correctamente." : "Docente registrado. Sus documentos quedaron pendientes de validacion.");
+      setEditing(null);
+      await onSaved();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo guardar el docente.");
+      throw error;
+    }
+  }
+
+  async function updateDocumentStatus(docente: Docente, tipoRequisitoId: number, estado: string) {
+    await apiPut(`/admin/docentes/${docente.docente_id}/documentos/${tipoRequisitoId}/estado`, { estado_validacion: estado });
+    setMessage("Estado del documento actualizado.");
+    await onSaved();
+    setViewingDocuments(null);
+  }
 
   return (
     <>
@@ -773,10 +845,21 @@ function CrudDocente({ rows, materias, onSubmit, onUpdate, onDelete }: { rows: D
         <button onClick={() => setTab("registro")} className={`rounded-lg px-5 py-3 font-bold ${tab === "registro" ? "bg-blue-700 text-white" : "text-blue-950 hover:bg-slate-100"}`}>Registro de docentes</button>
         <button onClick={() => setTab("asignacion")} className={`rounded-lg px-5 py-3 font-bold ${tab === "asignacion" ? "bg-blue-700 text-white" : "text-blue-950 hover:bg-slate-100"}`}>Asignacion de docentes</button>
       </div>
+      {message && <div className="mb-6 rounded-lg bg-blue-50 p-4 font-semibold text-blue-900">{message}</div>}
       {tab === "registro" && (
         <>
-          <DocenteForm title="Registrar docente" materias={materias} onSubmit={onSubmit} />
-          <Table columns={["docente_id", "ci", "nombres", "apellidos", "correo", "especialidad", "materias", "estado"]} rows={rows as unknown as Array<Record<string, unknown>>} actions={(row) => <ActionButtons onEdit={() => setEditing(row as unknown as Docente)} onDelete={() => setDeleting(row as unknown as Docente)} />} compact />
+          <DocenteForm title="Registrar docente" materias={materias} onSubmit={(data) => saveDocente(data)} />
+          <Table
+            columns={["docente_id", "ci", "nombres", "apellidos", "correo", "especialidad", "materias", "documentacion_estado", "estado"]}
+            rows={rows as unknown as Array<Record<string, unknown>>}
+            actions={(row) => (
+              <div className="flex gap-2">
+                <button title="Revisar documentos" onClick={() => setViewingDocuments(row as unknown as Docente)} className="rounded-lg bg-emerald-700 p-2 text-white"><FileText size={18} /></button>
+                <ActionButtons onEdit={() => setEditing(row as unknown as Docente)} onDelete={() => setDeleting(row as unknown as Docente)} />
+              </div>
+            )}
+            compact
+          />
         </>
       )}
       {tab === "asignacion" && <DocenteAsignacionModule />}
@@ -786,11 +869,38 @@ function CrudDocente({ rows, materias, onSubmit, onUpdate, onDelete }: { rows: D
             title=""
             docente={editing}
             materias={materias}
-            onSubmit={(data) => {
-              onUpdate(editing.docente_id, data);
-              setEditing(null);
-            }}
+            onSubmit={(data) => saveDocente(data, editing.docente_id)}
           />
+        </Modal>
+      )}
+      {viewingDocuments && (
+        <Modal title={`Documentos de ${viewingDocuments.nombres} ${viewingDocuments.apellidos}`} onClose={() => setViewingDocuments(null)}>
+          <div className="space-y-4">
+            {(viewingDocuments.requisitos ?? []).map((requisito) => (
+              <div key={requisito.tipo_requisito_id} className="rounded-lg border border-slate-200 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-extrabold">{requisito.nombre}</h3>
+                    <p className="text-sm text-slate-600">{requisito.descripcion} | {requisito.institucion}</p>
+                    <p className="text-sm text-slate-600">Nro. {requisito.codigo_documento} | {requisito.fecha_obtencion}</p>
+                    <span className="mt-2 inline-block rounded bg-slate-100 px-2 py-1 text-xs font-bold">{requisito.estado_validacion}</span>
+                  </div>
+                  <button
+                    onClick={() => apiDownload(`/admin/docentes/${viewingDocuments.docente_id}/documentos/${requisito.tipo_requisito_id}`, requisito.archivo_nombre_original ?? "documento")}
+                    className="rounded-lg bg-blue-700 px-4 py-2 font-bold text-white"
+                  >
+                    Ver archivo
+                  </button>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {["VALIDADO", "OBSERVADO", "RECHAZADO"].map((estado) => (
+                    <button key={estado} onClick={() => updateDocumentStatus(viewingDocuments, requisito.tipo_requisito_id, estado)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold">{estado}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {(viewingDocuments.requisitos ?? []).length === 0 && <p className="rounded-lg bg-red-50 p-4 font-bold text-red-700">Este docente no tiene documentos registrados.</p>}
+          </div>
         </Modal>
       )}
       {deleting && <ConfirmModal title="Eliminar docente" text={`Estas seguro de eliminar ${deleting.nombres} ${deleting.apellidos}?`} onClose={() => setDeleting(null)} onConfirm={() => { onDelete(deleting.docente_id); setDeleting(null); }} />}
@@ -799,10 +909,14 @@ function CrudDocente({ rows, materias, onSubmit, onUpdate, onDelete }: { rows: D
 }
 
 // MODULO DOCENTES FORMULARIO - asistente por pasos para registrar/editar datos y materias del docente.
-function DocenteForm({ title, materias, docente, onSubmit }: { title: string; materias: Materia[]; docente?: Docente; onSubmit: (data: Record<string, unknown>) => void }) {
+function DocenteForm({ title, materias, docente, onSubmit }: { title: string; materias: Materia[]; docente?: Docente; onSubmit: (data: FormData) => Promise<void> | void }) {
+  const formRef = useRef<HTMLFormElement>(null);
   const initialMaterias = docente?.materia_ids?.length ? docente.materia_ids.map(String) : [materias[0]?.materia_id ? String(materias[0].materia_id) : ""];
   const [materiaIds, setMateriaIds] = useState<string[]>(initialMaterias);
   const [step, setStep] = useState(0);
+  const [fileNames, setFileNames] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const requisito = (codigo: string) => docente?.requisitos?.find((item) => item.codigo === codigo);
   const [preview, setPreview] = useState<Record<string, string>>({
     ci: docente?.ci ?? "",
     nombres: docente?.nombres ?? "",
@@ -812,34 +926,77 @@ function DocenteForm({ title, materias, docente, onSubmit }: { title: string; ma
     especialidad: docente?.especialidad ?? "",
     estado: docente?.estado ?? "ACTIVO",
   });
-  const steps = ["Identificacion", "Contacto", "Academico", "Materias", "Confirmacion"];
-  const next = () => setStep((value) => Math.min(value + 1, steps.length - 1));
+  const steps = ["Identificacion", "Contacto", "Academico", "Documentos", "Materias", "Confirmacion"];
+  const next = () => {
+    const currentPanel = formRef.current?.querySelector(`[data-docente-step="${step}"]`);
+    const invalid = currentPanel?.querySelector<HTMLInputElement | HTMLSelectElement>("input:invalid, select:invalid");
+    if (invalid) {
+      invalid.reportValidity();
+      return;
+    }
+    setStep((value) => Math.min(value + 1, steps.length - 1));
+  };
   const prev = () => setStep((value) => Math.max(value - 1, 0));
 
   return (
-    <form onSubmit={(event) => {
+    <form ref={formRef} onSubmit={async (event) => {
       event.preventDefault();
-      const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-      onSubmit({ ...data, materia_ids: materiaIds.filter(Boolean).map(Number) });
-      event.currentTarget.reset();
-      setMateriaIds(initialMaterias);
-      setPreview({
-        ci: docente?.ci ?? "",
-        nombres: docente?.nombres ?? "",
-        apellidos: docente?.apellidos ?? "",
-        telefono: docente?.telefono ?? "",
-        correo: docente?.correo ?? "",
-        especialidad: docente?.especialidad ?? "",
-        estado: docente?.estado ?? "ACTIVO",
-      });
-      setStep(0);
+      const data = new FormData(event.currentTarget);
+      data.delete("materia_ids[]");
+      materiaIds.filter(Boolean).forEach((id) => data.append("materia_ids[]", id));
+      setSaving(true);
+      try {
+        await onSubmit(data);
+        if (!docente) {
+          event.currentTarget.reset();
+          setMateriaIds(initialMaterias);
+          setFileNames({});
+          setStep(0);
+        }
+      } finally {
+        setSaving(false);
+      }
     }} onChange={(event) => setPreview(formValues(event.currentTarget))} noValidate className="rounded-lg bg-white p-6 shadow-sm">
       {title && <h2 className="mb-5 flex items-center gap-2 text-xl font-extrabold"><Plus size={22} /> {title}</h2>}
       <StepHeader steps={steps} current={step} />
-      <div className={step === 0 ? "" : "hidden"}><StepCard title="Identificacion" description="Datos basicos del docente."><Field name="ci" label="CI" defaultValue={docente?.ci} /><Field name="nombres" label="Nombres" defaultValue={docente?.nombres} /><Field name="apellidos" label="Apellidos" defaultValue={docente?.apellidos} /></StepCard></div>
-      <div className={step === 1 ? "" : "hidden"}><StepCard title="Contacto" description="Datos de comunicacion."><Field name="telefono" label="Telefono" defaultValue={docente?.telefono} /><Field name="correo" label="Correo" type="email" defaultValue={docente?.correo} /></StepCard></div>
-      <div className={step === 2 ? "" : "hidden"}><StepCard title="Academico" description="Especialidad y estado del docente."><Field name="especialidad" label="Especialidad" defaultValue={docente?.especialidad} /><SelectField name="estado" label="Estado" defaultValue={docente?.estado ?? "ACTIVO"}><option>ACTIVO</option><option>INACTIVO</option></SelectField></StepCard></div>
-      <div className={step === 3 ? "" : "hidden"}>
+      <div data-docente-step="0" className={step === 0 ? "" : "hidden"}><StepCard title="Identificacion" description="Datos basicos del docente."><Field name="ci" label="CI" defaultValue={docente?.ci} /><Field name="nombres" label="Nombres" defaultValue={docente?.nombres} /><Field name="apellidos" label="Apellidos" defaultValue={docente?.apellidos} /></StepCard></div>
+      <div data-docente-step="1" className={step === 1 ? "" : "hidden"}><StepCard title="Contacto" description="Datos de comunicacion."><Field name="telefono" label="Telefono" defaultValue={docente?.telefono} /><Field name="correo" label="Correo" type="email" defaultValue={docente?.correo} /></StepCard></div>
+      <div data-docente-step="2" className={step === 2 ? "" : "hidden"}><StepCard title="Academico" description="Especialidad y estado del docente."><Field name="especialidad" label="Especialidad" defaultValue={docente?.especialidad} /><SelectField name="estado" label="Estado" defaultValue={docente?.estado ?? "ACTIVO"}><option>ACTIVO</option><option>INACTIVO</option></SelectField></StepCard></div>
+      <div data-docente-step="3" className={step === 3 ? "" : "hidden"}>
+        <StepCard title="Documentos profesionales" description="Adjunta imagenes o PDF del titulo profesional, maestria y diplomado.">
+          {[
+            ["PROF_AREA", "Titulo profesional en el area"],
+            ["MAESTRIA", "Titulo de maestria"],
+            ["DIP_EDU_SUP", "Diplomado en educacion superior"],
+          ].map(([codigo, label]) => {
+            const current = requisito(codigo);
+            return (
+              <div key={codigo} className="rounded-lg border border-slate-200 p-4 md:col-span-3">
+                <h3 className="font-extrabold">{label}</h3>
+                <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <Field name={`requisitos[${codigo}][descripcion]`} label="Titulo o descripcion" defaultValue={current?.descripcion} />
+                  <Field name={`requisitos[${codigo}][institucion]`} label="Institucion" defaultValue={current?.institucion} />
+                  <Field name={`requisitos[${codigo}][fecha_obtencion]`} label="Fecha de obtencion" type="date" defaultValue={current?.fecha_obtencion} />
+                  <Field name={`requisitos[${codigo}][codigo_documento]`} label="Nro. profesional o titulo" defaultValue={current?.codigo_documento} />
+                </div>
+                <label className="mt-3 block text-sm font-bold text-slate-700">
+                  Archivo {docente ? "(dejar vacio para conservar el actual)" : ""}
+                  <input
+                    name={`documentos[${codigo}]`}
+                    type="file"
+                    required={!docente}
+                    accept=".jpg,.jpeg,.png,.webp,.pdf"
+                    onChange={(event) => setFileNames((names) => ({ ...names, [codigo]: event.target.files?.[0]?.name ?? "" }))}
+                    className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-2"
+                  />
+                </label>
+                <p className="mt-2 text-sm text-slate-500">{fileNames[codigo] || current?.archivo_nombre_original || "Ningun archivo seleccionado"}</p>
+              </div>
+            );
+          })}
+        </StepCard>
+      </div>
+      <div data-docente-step="4" className={step === 4 ? "" : "hidden"}>
         <div className="mt-5 rounded-lg border border-slate-200 p-4">
           <p className="mb-3 text-sm font-bold text-slate-700">Materias que puede dictar</p>
           <div className="space-y-3">
@@ -855,7 +1012,7 @@ function DocenteForm({ title, materias, docente, onSubmit }: { title: string; ma
           </div>
         </div>
       </div>
-      <div className={step === 4 ? "" : "hidden"}>
+      <div data-docente-step="5" className={step === 5 ? "" : "hidden"}>
         <PreviewPanel
           title="Confirmacion"
           description="Verifica los datos ingresados antes de guardar el docente."
@@ -868,10 +1025,14 @@ function DocenteForm({ title, materias, docente, onSubmit }: { title: string; ma
             ["Especialidad", preview.especialidad],
             ["Estado", preview.estado],
             ["Materias", materiaIds.map((id) => materias.find((materia) => String(materia.materia_id) === id)?.nombre).filter(Boolean).join(", ")],
+            ["Titulo profesional", fileNames.PROF_AREA || requisito("PROF_AREA")?.archivo_nombre_original || ""],
+            ["Maestria", fileNames.MAESTRIA || requisito("MAESTRIA")?.archivo_nombre_original || ""],
+            ["Diplomado", fileNames.DIP_EDU_SUP || requisito("DIP_EDU_SUP")?.archivo_nombre_original || ""],
           ]}
         />
       </div>
       <StepActions current={step} total={steps.length} onPrev={prev} onNext={next} />
+      {saving && <p className="mt-3 font-bold text-blue-700">Guardando docente y documentos...</p>}
     </form>
   );
 }
@@ -1232,7 +1393,7 @@ function CrudCupo({ rows, carreras, gestiones, onSubmit }: { rows: CupoCarrera[]
 }
 
 // MODULO POSTULANTES - registro, busqueda, filtros, edicion, eliminacion y grupo asignado.
-function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDelete }: { carreras: Carrera[]; gestiones: Gestion[]; grupos: GrupoResumen["grupos"]; onSubmit: (data: Record<string, unknown>) => Promise<void> | void; onUpdate: (id: number, data: Record<string, unknown>) => Promise<void> | void; onDelete: (id: number) => Promise<void> | void }) {
+function CrudPostulante({ readOnly = false, carreras, gestiones, grupos, onSubmit, onUpdate, onDelete }: { readOnly?: boolean; carreras: Carrera[]; gestiones: Gestion[]; grupos: GrupoResumen["grupos"]; onSubmit: (data: Record<string, unknown>) => Promise<void> | void; onUpdate: (id: number, data: Record<string, unknown>) => Promise<void> | void; onDelete: (id: number) => Promise<void> | void }) {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [estado, setEstado] = useState("");
@@ -1311,7 +1472,7 @@ function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDel
 
   return (
     <>
-      <PostulanteWizard gestiones={gestiones} carreras={carreras} onSubmit={submitAndRefresh} />
+      {!readOnly && <PostulanteWizard gestiones={gestiones} carreras={carreras} onSubmit={submitAndRefresh} />}
 
       <div className="mt-6 grid gap-3 rounded-lg bg-white p-4 shadow-sm md:grid-cols-[1fr_180px_180px_220px]">
         <div className="flex items-center gap-3">
@@ -1342,7 +1503,7 @@ function CrudPostulante({ carreras, gestiones, grupos, onSubmit, onUpdate, onDel
         rows={pageData.data as unknown as Array<Record<string, unknown>>}
         compact
         paginated={false}
-        actions={(row) => (
+        actions={readOnly ? undefined : (row) => (
           <div className="flex gap-2">
             <button onClick={() => setEditing(row as unknown as Postulante)} className="rounded-lg bg-blue-700 p-2 text-white"><Pencil size={18} /></button>
             <button onClick={() => setDeleting(row as unknown as Postulante)} className="rounded-lg bg-red-700 p-2 text-white"><Trash2 size={18} /></button>

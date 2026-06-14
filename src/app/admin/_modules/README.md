@@ -6,8 +6,10 @@ Cada archivo representa una seccion del panel administrativo. Esta separacion ev
 
 - `DashboardModule.tsx`: indicadores, graficos y resumen.
 - `ExamenesModule.tsx`: busqueda de postulantes, notas, promedio y estado final.
-- `ReportesModule.tsx`: reportes paginados y filtro por gestion.
+- `ReportesModule.tsx`: reportes paginados, filtro por gestion y exportacion PDF/Excel.
 - `BitacoraModule.tsx`: acciones registradas en el sistema.
+- `UsuariosModule.tsx`: cuentas, roles y vinculacion con docentes.
+- `MisHorariosModule.tsx`: calendario personal del usuario docente.
 
 ## Cuando mover algo aqui
 

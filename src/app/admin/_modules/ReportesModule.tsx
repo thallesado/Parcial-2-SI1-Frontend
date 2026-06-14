@@ -1,7 +1,8 @@
 "use client";
 
+import { Download, FileSpreadsheet, FileText } from "lucide-react";
 import { useEffect, useState } from "react";
-import { apiGet, Gestion, PaginatedResponse } from "@/lib/api";
+import { apiDownload, apiGet, Gestion, PaginatedResponse } from "@/lib/api";
 import { Table } from "../_components/AdminTable";
 import { PaginationControls } from "../_components/PaginationControls";
 
@@ -25,6 +26,7 @@ export function ReportesModule({ gestiones }: { gestiones: Gestion[] }) {
   const [perPage, setPerPage] = useState(20);
   const [gestion, setGestion] = useState("");
   const [message, setMessage] = useState("");
+  const [exporting, setExporting] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +55,23 @@ export function ReportesModule({ gestiones }: { gestiones: Gestion[] }) {
 
   const columns = rows[0] ? Object.keys(rows[0]) : [];
 
+  async function exportReport(format: "pdf" | "excel") {
+    const params = new URLSearchParams();
+    if (gestion) params.set("gestion_id", gestion);
+    setExporting(format);
+    try {
+      await apiDownload(
+        `/admin/reportes/${tipo}/exportar/${format}?${params.toString()}`,
+        `${tipo}.${format === "pdf" ? "pdf" : "xls"}`,
+      );
+      setMessage("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo exportar el reporte.");
+    } finally {
+      setExporting("");
+    }
+  }
+
   return (
     <>
       <div className="rounded-lg bg-white p-5 shadow-sm">
@@ -71,6 +90,12 @@ export function ReportesModule({ gestiones }: { gestiones: Gestion[] }) {
             <option value="">Todas las gestiones</option>
             {gestiones.map((item) => <option key={item.gestion_id} value={item.gestion_id}>{item.gestion_id}</option>)}
           </select>
+          <button onClick={() => exportReport("pdf")} disabled={Boolean(exporting)} className="inline-flex h-11 items-center gap-2 rounded-lg bg-red-700 px-4 font-bold text-white disabled:opacity-50">
+            {exporting === "pdf" ? <Download className="animate-pulse" size={18} /> : <FileText size={18} />} PDF
+          </button>
+          <button onClick={() => exportReport("excel")} disabled={Boolean(exporting)} className="inline-flex h-11 items-center gap-2 rounded-lg bg-emerald-700 px-4 font-bold text-white disabled:opacity-50">
+            {exporting === "excel" ? <Download className="animate-pulse" size={18} /> : <FileSpreadsheet size={18} />} Excel
+          </button>
         </div>
       </div>
       {message && <div className="mt-6 rounded-lg bg-red-50 p-4 font-bold text-red-700">{message}</div>}

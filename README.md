@@ -6,7 +6,7 @@ Incluye:
 
 - Portal publico de la universidad.
 - Formulario publico de inscripcion.
-- Panel administrativo.
+- Panel por roles para administrador, secretaria y docente.
 - Consumo de API Laravel.
 - Componentes de tablas, paginacion y modulos administrativos.
 
@@ -100,3 +100,7 @@ Flujo:
 ```text
 Pantalla React -> apiGet/apiSend -> Laravel API -> PostgreSQL
 ```
+
+El login recibe una lista de `secciones` permitidas. El menu lateral filtra sus
+opciones con esa lista, pero Laravel tambien valida cada endpoint para evitar
+que la seguridad dependa solamente de la interfaz.

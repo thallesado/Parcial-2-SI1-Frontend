@@ -552,9 +552,14 @@ function BoletaScreen({ boleta, token }: { boleta: BoletaInscripcion; token: str
             <h1 className="flex items-center gap-2 text-3xl font-extrabold text-blue-950"><CheckCircle2 className="text-emerald-600" /> Inscripcion completada</h1>
             <p className="mt-2 text-slate-600">Tu pago fue confirmado y la inscripcion quedo consolidada.</p>
           </div>
-          <a href={`${API_URL}/inscripciones/${token}/boleta.pdf`} className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-5 py-3 font-bold text-white">
-            <Download size={18} /> Descargar PDF
-          </a>
+          <div className="flex flex-wrap gap-3">
+            <Link href="/" className="inline-flex items-center gap-2 rounded-lg border border-blue-700 px-5 py-3 font-bold text-blue-700">
+              <ArrowLeft size={18} /> Volver al inicio
+            </Link>
+            <a href={`${API_URL}/inscripciones/${token}/boleta.pdf`} className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-5 py-3 font-bold text-white">
+              <Download size={18} /> Descargar PDF
+            </a>
+          </div>
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">

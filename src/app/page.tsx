@@ -1,7 +1,7 @@
-import { ArrowRight, FileText, GraduationCap, Mail, MapPin, Phone } from "lucide-react";
+import { ArrowRight, FileText, GraduationCap } from "lucide-react";
 import Link from "next/link";
 
-// PAGINA PUBLICA - portada, carreras, requisitos y contacto.
+// PAGINA PUBLICA - portada, carreras y requisitos.
 // Las carreras se leen desde la API publica /api/portal, pero el logo/fondo se cambian solo aqui.
 type HomeData = {
   carreras: Array<{ carrera_id: number; codigo: string; nombre: string }>;
@@ -70,7 +70,6 @@ export default async function Home() {
             <a href="#carreras">Carreras</a>
             <a href="#admision">Proceso de Admision</a>
             <a href="#requisitos">Requisitos</a>
-            <a className="rounded-lg bg-red-700 px-8 py-3 text-white" href="#contacto">Contacto</a>
             <Link className="rounded-lg border border-blue-700 px-6 py-3 text-blue-700" href="/admin">Admin</Link>
           </div>
         </nav>
@@ -140,32 +139,6 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* CONTACTO PUBLICO - formulario visual de consulta, no conectado todavia a backend. */}
-      <section id="contacto" className="bg-white px-6 py-24">
-        <div className="mx-auto max-w-7xl">
-          <div className="text-center">
-            <h2 className="text-5xl font-extrabold">¿Tienes <span className="text-red-700">Preguntas?</span></h2>
-            <p className="mx-auto mt-6 max-w-3xl text-2xl text-slate-600">Nuestro equipo de admisiones esta listo para ayudarte.</p>
-          </div>
-          <div className="mt-16 grid gap-12 lg:grid-cols-2">
-            <div className="space-y-10">
-              <Contact icon={<Phone />} title="Telefono" text="+1 (555) 123-4567" color="blue" />
-              <Contact icon={<Mail />} title="Correo Electronico" text="admisiones@universidad.edu" color="red" />
-              <Contact icon={<MapPin />} title="Ubicacion" text="Calle Universidad 123" color="blue" />
-            </div>
-            <form className="rounded-lg bg-slate-50 p-10">
-              {["Nombre Completo", "Correo Electronico", "Telefono"].map((label) => (
-                <label key={label} className="mb-8 block text-lg font-bold">
-                  {label}
-                  <input className="mt-3 h-16 w-full rounded-lg border border-slate-300 bg-white px-6 text-lg" placeholder={label} />
-                </label>
-              ))}
-              <button className="h-16 w-full rounded-lg bg-red-700 text-xl font-bold text-white">Enviar consulta</button>
-            </form>
-          </div>
-        </div>
-      </section>
-
       {/* FOOTER PUBLICO - enlaces institucionales y acceso al panel administrativo. */}
       <footer className="bg-blue-900 px-6 py-16 text-white">
         <div className="mx-auto grid max-w-7xl gap-12 md:grid-cols-4">
@@ -179,19 +152,5 @@ export default async function Home() {
         </div>
       </footer>
     </main>
-  );
-}
-
-function Contact({ icon, title, text, color }: { icon: React.ReactNode; title: string; text: string; color: "blue" | "red" }) {
-  return (
-    <div className="flex gap-6">
-      <div className={`grid h-16 w-16 shrink-0 place-items-center rounded-lg ${color === "blue" ? "bg-blue-700" : "bg-red-700"} text-white`}>
-        {icon}
-      </div>
-      <div>
-        <h3 className="text-2xl font-extrabold">{title}</h3>
-        <p className="mt-3 text-xl text-slate-700">{text}</p>
-      </div>
-    </div>
   );
 }

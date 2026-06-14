@@ -192,6 +192,7 @@ export type DocenteRequisito = {
   tipo_requisito_id: number;
   codigo: "PROF_AREA" | "MAESTRIA" | "DIP_EDU_SUP";
   nombre: string;
+  obligatorio?: boolean;
   descripcion: string;
   institucion: string;
   fecha_obtencion: string;

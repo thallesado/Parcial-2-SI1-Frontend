@@ -963,28 +963,29 @@ function DocenteForm({ title, materias, docente, onSubmit }: { title: string; ma
       <div data-docente-step="1" className={step === 1 ? "" : "hidden"}><StepCard title="Contacto" description="Datos de comunicacion."><Field name="telefono" label="Telefono" defaultValue={docente?.telefono} /><Field name="correo" label="Correo" type="email" defaultValue={docente?.correo} /></StepCard></div>
       <div data-docente-step="2" className={step === 2 ? "" : "hidden"}><StepCard title="Academico" description="Especialidad y estado del docente."><Field name="especialidad" label="Especialidad" defaultValue={docente?.especialidad} /><SelectField name="estado" label="Estado" defaultValue={docente?.estado ?? "ACTIVO"}><option>ACTIVO</option><option>INACTIVO</option></SelectField></StepCard></div>
       <div data-docente-step="3" className={step === 3 ? "" : "hidden"}>
-        <StepCard title="Documentos profesionales" description="Adjunta imagenes o PDF del titulo profesional, maestria y diplomado.">
+        <StepCard title="Documentos profesionales" description="El titulo profesional y el diplomado son obligatorios. La maestria es opcional.">
           {[
             ["PROF_AREA", "Titulo profesional en el area"],
-            ["MAESTRIA", "Titulo de maestria"],
+            ["MAESTRIA", "Titulo de maestria (opcional)"],
             ["DIP_EDU_SUP", "Diplomado en educacion superior"],
           ].map(([codigo, label]) => {
             const current = requisito(codigo);
+            const required = codigo !== "MAESTRIA";
             return (
               <div key={codigo} className="rounded-lg border border-slate-200 p-4 md:col-span-3">
                 <h3 className="font-extrabold">{label}</h3>
                 <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <Field name={`requisitos[${codigo}][descripcion]`} label="Titulo o descripcion" defaultValue={current?.descripcion} />
-                  <Field name={`requisitos[${codigo}][institucion]`} label="Institucion" defaultValue={current?.institucion} />
-                  <Field name={`requisitos[${codigo}][fecha_obtencion]`} label="Fecha de obtencion" type="date" defaultValue={current?.fecha_obtencion} />
-                  <Field name={`requisitos[${codigo}][codigo_documento]`} label="Nro. profesional o titulo" defaultValue={current?.codigo_documento} />
+                  <Field name={`requisitos[${codigo}][descripcion]`} label="Titulo o descripcion" required={required} defaultValue={current?.descripcion} />
+                  <Field name={`requisitos[${codigo}][institucion]`} label="Institucion" required={required} defaultValue={current?.institucion} />
+                  <Field name={`requisitos[${codigo}][fecha_obtencion]`} label="Fecha de obtencion" type="date" required={required} defaultValue={current?.fecha_obtencion} />
+                  <Field name={`requisitos[${codigo}][codigo_documento]`} label="Nro. profesional o titulo" required={required} defaultValue={current?.codigo_documento} />
                 </div>
                 <label className="mt-3 block text-sm font-bold text-slate-700">
                   Archivo {docente ? "(dejar vacio para conservar el actual)" : ""}
                   <input
                     name={`documentos[${codigo}]`}
                     type="file"
-                    required={!docente}
+                    required={!docente && required}
                     accept=".jpg,.jpeg,.png,.webp,.pdf"
                     onChange={(event) => setFileNames((names) => ({ ...names, [codigo]: event.target.files?.[0]?.name ?? "" }))}
                     className="mt-2 block w-full rounded-lg border border-slate-300 bg-white p-2"
@@ -1026,7 +1027,7 @@ function DocenteForm({ title, materias, docente, onSubmit }: { title: string; ma
             ["Estado", preview.estado],
             ["Materias", materiaIds.map((id) => materias.find((materia) => String(materia.materia_id) === id)?.nombre).filter(Boolean).join(", ")],
             ["Titulo profesional", fileNames.PROF_AREA || requisito("PROF_AREA")?.archivo_nombre_original || ""],
-            ["Maestria", fileNames.MAESTRIA || requisito("MAESTRIA")?.archivo_nombre_original || ""],
+            ["Maestria (opcional)", fileNames.MAESTRIA || requisito("MAESTRIA")?.archivo_nombre_original || "No presentada"],
             ["Diplomado", fileNames.DIP_EDU_SUP || requisito("DIP_EDU_SUP")?.archivo_nombre_original || ""],
           ]}
         />
